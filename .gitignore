@@ -3,37 +3,33 @@
 #project
 /project-notes
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# gradle / kotlin build output
+.gradle
+.kotlin
+**/build/
+!src/**/build/
 
-# testing
-/coverage
+# android
+local.properties
+captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
 
-# next.js
-/.next/
-/out/
+# signing keys and credentials (never commit)
+*.jks
+*.keystore
+keystore.properties
+*.pem
 
-# production
-/build
+# ide
+.idea
+*.iml
 
 # misc
 .DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # local env files
 .env*.local
 .env
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
