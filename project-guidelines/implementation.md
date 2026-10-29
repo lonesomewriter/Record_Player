@@ -3,7 +3,7 @@
 ## Log your actions
 * All your actions should be logged under a folder(named after the date["YYYY-MM-DD"] the action was done. If one already exists for the current session with the appropiate name and date, use that one, otherwise create another one) under "/project-changelog". The markdown file should contain the details of said change/build(ESPECIALLY the time it was done), along with the impacts that come with it.
     - This rule DOES NOT apply to any untracked components(anything applicable to ".gitignore")
-    - Files should contain a "Performed By"(If AI-Agent, state which model/brand, if user, write down your name) and "Approved By"(Who approved the action? If User, write down your name. If AI-Agent, state the Agent's model/brand)
+    - Files should contain a "Performed By"(If AI-Agent, state which model/brand, if user, write down your name) and "Approved By"(Who approved the action? If User, write down your name. If AI-Agent, state the Agent's model/brand). 
 
 ## Never edit off the bat
 * You can read through the project, but any actions intended to make permamnent or temporary changes should be designed in planning mode to avoid conflict with project structure. NEVER automatically edit anything in the repo without explicit permission given.
@@ -17,6 +17,7 @@
     - Modules/Scripts
     - Application Builds
     - Servers
+    * Store prior versions using the layout "/version-control/<component>/<YYYY-MM-DD_HHMM>/<file>"
     * This rule however does exclude documentation(we are mainly focused on keeping version control for application components) such as:
         - Guidelines
         - Changelogs 
