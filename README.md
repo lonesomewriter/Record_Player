@@ -8,8 +8,8 @@ No accounts, ads, analytics or network access.
 
 | Module | Contents |
 |---|---|
-| `shared/` | Code used by both apps. `commonMain`: UI. `jvmShared`: tag editing (jaudiotagger + our Opus tag support). `jvmMain`: Linux playback through GStreamer. |
-| `androidApp/` | Android entry point. |
+| `shared/` | Code used by both apps. `commonMain`: UI, music library, player rules (queue, shuffle, repeat). `jvmShared`: tag editing (jaudiotagger + our Opus tag support). `jvmMain`: Linux playback through GStreamer. |
+| `androidApp/` | Android entry point and the background playback service (Media3, lock-screen/notification controls). |
 | `desktopApp/` | Linux desktop entry point and `.deb`/`.rpm` packaging. |
 
 ## Requirements
@@ -27,6 +27,7 @@ No accounts, ads, analytics or network access.
 ./gradlew :desktopApp:run                    # run the Linux desktop app
 ./gradlew :androidApp:assembleDebug          # build the Android debug APK
 ./gradlew :shared:jvmTest                    # run tests (playback tests skip if GStreamer is missing)
+./gradlew :androidApp:connectedDebugAndroidTest   # Android player tests (needs a running emulator or phone)
 ./gradlew :desktopApp:packageDeb             # build a .deb package
 ```
 

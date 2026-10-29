@@ -76,6 +76,8 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     /** Loads a local file and waits until it is ready (paused at the start). */
     fun load(path: String) {
         setState.invoke(playbin, STATE_NULL) as Int
+        ended = false
+        pendingError = null
         Arena.ofConfined().use { a ->
             val err = a.allocate(ADDRESS)
             val uri = filenameToUri.invoke(a.allocateFrom(path), err) as MemorySegment
@@ -94,43 +96,56 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     fun durationMs(): Long? = query(queryDuration)
 
     fun seekMs(ms: Long): Boolean {
+        ended = false
         val ok = seekSimple.invoke(playbin, FORMAT_TIME, SEEK_FLUSH_ACCURATE, ms * 1_000_000) as Int != 0
         waitForState()
         return ok
     }
 
     private var pendingError: String? = null
+    private var ended = false
 
     /** Non-blocking: returns an error message if GStreamer reported one. */
-    fun pollError(): String? = pendingError?.also { pendingError = null } ?: readError()
+    fun pollError(): String? {
+        while (nextMessage(0)) Unit
+        return pendingError.also { pendingError = null }
+    }
 
     /** Waits up to [timeoutMs] for the end of the stream or an error; errors are kept for [pollError]. */
     fun awaitEnd(timeoutMs: Long): Boolean {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000
-        while (System.nanoTime() < deadline) {
-            readError()?.let { pendingError = it; return true }
-            val msg = busPop.invoke(bus, 50_000_000L, MSG_EOS) as MemorySegment
-            if (msg != MemorySegment.NULL) {
-                miniObjectUnref.invoke(msg)
-                return true
-            }
+        while (!ended && pendingError == null) {
+            val left = deadline - System.nanoTime()
+            if (left <= 0) return false
+            nextMessage(left)
         }
-        return false
+        ended = false
+        return true
     }
 
-    private fun readError(): String? {
-        val msg = busPop.invoke(bus, 0L, MSG_ERROR) as MemorySegment
-        if (msg == MemorySegment.NULL) return null
-        return Arena.ofConfined().use { a ->
-            val errOut = a.allocate(ADDRESS)
-            parseError.invoke(msg, errOut, MemorySegment.NULL)
-            val gerror = errOut.get(ADDRESS, 0).reinterpret(16)
-            // GError { GQuark domain; gint code; gchar *message; }
-            val text = gerror.get(ADDRESS, 8).reinterpret(Long.MAX_VALUE).getString(0)
-            gErrorFree.invoke(gerror)
-            miniObjectUnref.invoke(msg)
-            text
+    /**
+     * Takes one end-of-stream or error message off the bus, waiting up to [timeoutNs].
+     * Both types must be read with one filter: the bus discards messages that don't match it.
+     */
+    private fun nextMessage(timeoutNs: Long): Boolean {
+        val msg = busPop.invoke(bus, timeoutNs, MSG_EOS or MSG_ERROR) as MemorySegment
+        if (msg == MemorySegment.NULL) return false
+        // GstMessage { GstMiniObject (64 bytes); GstMessageType type; ... }
+        if (msg.reinterpret(72).get(JAVA_INT, 64) == MSG_ERROR) {
+            pendingError = Arena.ofConfined().use { a ->
+                val errOut = a.allocate(ADDRESS)
+                parseError.invoke(msg, errOut, MemorySegment.NULL)
+                val gerror = errOut.get(ADDRESS, 0).reinterpret(16)
+                // GError { GQuark domain; gint code; gchar *message; }
+                val text = gerror.get(ADDRESS, 8).reinterpret(Long.MAX_VALUE).getString(0)
+                gErrorFree.invoke(gerror)
+                text
+            }
+        } else {
+            ended = true
         }
+        miniObjectUnref.invoke(msg)
+        return true
     }
 
     override fun close() {
