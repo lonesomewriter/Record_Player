@@ -12,6 +12,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -35,6 +36,42 @@ object OpusTags {
     fun read(file: File): VorbisCommentTag = file.inputStream().buffered().use { input ->
         val headers = readHeaders(input)
         parseComments(headers.commentPacket).tag
+    }
+
+    /**
+     * Playback length from the last page's granule position minus the pre-skip (RFC 7845 section 4).
+     * Opus granule positions always count 48 kHz samples. Returns null if the file doesn't look like Ogg Opus.
+     */
+    fun durationMs(file: File): Long? = RandomAccessFile(file, "r").use { raf ->
+        val head = ByteArray(minOf(raf.length(), 512L).toInt()).also { raf.readFully(it) }
+        if (head.size < 27 || !startsWith(head, "OggS".toByteArray(Charsets.US_ASCII))) return null
+        val bodyStart = 27 + (head[26].toInt() and 0xFF)
+        if (bodyStart + 12 > head.size || !startsWith(head.copyOfRange(bodyStart, head.size), OPUS_HEAD)) return null
+        val serial = getLE(head, 14, 4)
+        val preSkip = getLE(head, bodyStart + 10, 2)
+
+        // The last page is at most 65,307 bytes long, so it starts within the final two pages' worth of bytes.
+        val tailLength = minOf(raf.length(), 2L * 65_307).toInt()
+        val tail = ByteArray(tailLength)
+        raf.seek(raf.length() - tailLength)
+        raf.readFully(tail)
+        for (i in tail.size - 27 downTo 0) {
+            if (tail[i] != 'O'.code.toByte() || tail[i + 1] != 'g'.code.toByte() ||
+                tail[i + 2] != 'g'.code.toByte() || tail[i + 3] != 'S'.code.toByte() || tail[i + 4].toInt() != 0
+            ) continue
+            if (getLE(tail, i + 14, 4) != serial) continue
+            // "OggS" can occur by chance inside audio data, so only trust a complete page with a valid checksum.
+            val segments = tail[i + 26].toInt() and 0xFF
+            if (i + 27 + segments > tail.size) continue
+            val bodyEnd = i + 27 + segments + (0 until segments).sumOf { tail[i + 27 + it].toInt() and 0xFF }
+            if (bodyEnd > tail.size) continue
+            val header = tail.copyOfRange(i, i + 27 + segments).also { for (k in 22 until 26) it[k] = 0 }
+            if (crc(header, tail.copyOfRange(i + 27 + segments, bodyEnd)) != getLE(tail, i + 22, 4).toInt()) continue
+            val granule = getLE(tail, i + 6, 8)
+            if (granule == -1L) continue // no packet ends on this page
+            return (granule - preSkip).coerceAtLeast(0) * 1000 / 48_000
+        }
+        null
     }
 
     fun write(file: File, tag: VorbisCommentTag) {
