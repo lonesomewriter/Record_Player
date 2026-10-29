@@ -34,6 +34,15 @@ object TagReader {
         return fromTag(audio.tag, durationMs)
     }
 
+    /** The first embedded cover image's bytes (any image format), or null if there is none. */
+    fun readArtwork(file: File): ByteArray? {
+        val tag = if (AudioFormats.extensionOf(file.name) == "opus") OpusTags.read(file) else AudioFileIO.read(file).tag
+        return runCatching { tag?.firstArtwork?.binaryData }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= MAX_ARTWORK_BYTES }
+    }
+
+    /** Larger embedded images are ignored rather than decoded. */
+    private const val MAX_ARTWORK_BYTES = 20 * 1024 * 1024
+
     private fun fromTag(tag: Tag?, durationMs: Long?) = TrackTags(
         title = tag.text(FieldKey.TITLE),
         artist = tag.text(FieldKey.ARTIST),

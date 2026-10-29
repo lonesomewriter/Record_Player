@@ -43,6 +43,10 @@ kotlin {
         }
         androidMain.get().dependsOn(jvmShared)
         jvmMain.get().dependsOn(jvmShared)
+        androidMain.dependencies {
+            // System Back handling for the phone layout.
+            implementation(libs.androidx.activity.compose)
+        }
 
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -62,6 +66,8 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotlin.testJunit)
             implementation(libs.kotlinx.coroutinesTest)
+            // Native Skia for rendering the desktop UI to images in tests.
+            implementation(compose.desktop.currentOs)
         }
     }
 }

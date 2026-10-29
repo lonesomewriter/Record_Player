@@ -41,7 +41,8 @@ data class ScanResult(val added: Int, val updated: Int, val removed: Int, val un
  * read are still listed so they remain playable.
  */
 class LibraryScanner(private val dao: TrackDao) {
-    suspend fun scan(source: LibrarySource): ScanResult {
+    /** [onProgress] gets the number of audio files checked so far and the current file name. */
+    suspend fun scan(source: LibrarySource, onProgress: (checked: Int, fileName: String) -> Unit = { _, _ -> }): ScanResult {
         val known = dao.scanIndex().associateBy { it.location }
         val seen = HashSet<String>()
         val pending = ArrayList<TrackEntity>()
@@ -52,6 +53,7 @@ class LibraryScanner(private val dao: TrackDao) {
 
         for (file in source.listFiles()) {
             if (!AudioFormats.isSupported(file.fileName) || !seen.add(file.location)) continue
+            onProgress(seen.size, file.fileName)
             val old = known[file.location]
             if (old != null && old.sizeBytes == file.sizeBytes && old.modifiedMs == file.modifiedMs) {
                 unchanged++

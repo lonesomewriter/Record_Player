@@ -18,7 +18,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** The Media3 player on a device or emulator, using the same 2-second tones as the desktop tests. */
+/**
+ * The Media3 player on a device or emulator, using the same 2-second tones as the desktop tests.
+ *
+ * Run with the app's data cleared (`adb shell pm clear dev.recorddisc.player`): the app then opens
+ * on its first-run screen, which leaves the player alone and has no endless animation. The disc
+ * home animates constantly, and the test framework would wait forever for it to go idle.
+ */
 @RunWith(AndroidJUnit4::class)
 class AndroidPlayerTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()

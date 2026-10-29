@@ -6,6 +6,7 @@ import java.lang.foreign.Linker
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.SymbolLookup
 import java.lang.foreign.ValueLayout.ADDRESS
+import java.lang.foreign.ValueLayout.JAVA_DOUBLE
 import java.lang.foreign.ValueLayout.JAVA_INT
 import java.lang.foreign.ValueLayout.JAVA_LONG
 import java.lang.invoke.MethodHandle
@@ -44,6 +45,7 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
         // g_object_set is variadic: (object, name, value, NULL)
         val setPtrProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS), Linker.Option.firstVariadicArg(2))
         val setIntProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_INT, ADDRESS), Linker.Option.firstVariadicArg(2))
+        val setDoubleProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_DOUBLE, ADDRESS), Linker.Option.firstVariadicArg(2))
 
         const val FORMAT_TIME = 3
         const val STATE_NULL = 1
@@ -91,6 +93,11 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
 
     fun play() { setState.invoke(playbin, STATE_PLAYING) as Int }
     fun pause() { setState.invoke(playbin, STATE_PAUSED) as Int; waitForState() }
+
+    /** Software volume, 0.0 (silent) to 1.0 (full). */
+    fun setVolume(volume: Double) {
+        setDoubleProp.invoke(playbin, str("volume"), volume.coerceIn(0.0, 1.0), MemorySegment.NULL)
+    }
 
     fun positionMs(): Long? = query(queryPosition)
     fun durationMs(): Long? = query(queryDuration)

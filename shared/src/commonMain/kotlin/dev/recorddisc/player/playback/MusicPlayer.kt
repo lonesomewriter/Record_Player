@@ -30,6 +30,8 @@ data class PlaybackState(
     val durationMs: Long? = null,
     val repeatMode: RepeatMode = RepeatMode.Off,
     val shuffle: Boolean = false,
+    /** 0 (silent) to 1 (full). */
+    val volume: Float = 1f,
     /** Last playback error, e.g. a file that was skipped because it can't be decoded. Cleared by the next song change the user makes. */
     val error: String? = null,
 ) {
@@ -53,6 +55,8 @@ interface MusicPlayer {
     fun seekTo(positionMs: Long)
     fun setRepeatMode(mode: RepeatMode)
     fun setShuffle(enabled: Boolean)
+    /** [volume] from 0 (silent) to 1 (full). */
+    fun setVolume(volume: Float)
     fun release()
 
     companion object {

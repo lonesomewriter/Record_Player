@@ -170,6 +170,8 @@ class AndroidPlayer(context: Context) : MusicPlayer {
 
     override fun setShuffle(enabled: Boolean) = command { it.shuffleModeEnabled = enabled }
 
+    override fun setVolume(volume: Float) = command { it.volume = volume.coerceIn(0f, 1f) }
+
     override fun release() {
         main.post {
             released = true
@@ -215,6 +217,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
                 else -> RepeatMode.Off
             },
             shuffle = c.shuffleModeEnabled,
+            volume = c.volume,
             error = error,
         )
     }

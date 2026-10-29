@@ -28,6 +28,7 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
     override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
     private var playing = false
+    private var volume = 1f
     private var error: String? = null
     /** Songs skipped in a row because they failed; stops playback once every song has failed. */
     private var failures = 0
@@ -100,6 +101,12 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
 
     override fun setShuffle(enabled: Boolean) = command {
         queue.setShuffle(enabled)
+        publish()
+    }
+
+    override fun setVolume(volume: Float) = command {
+        this.volume = volume.coerceIn(0f, 1f)
+        gst.setVolume(this.volume.toDouble())
         publish()
     }
 
@@ -176,6 +183,7 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
             durationMs = if (item == null) null else gst.durationMs() ?: item.durationMs,
             repeatMode = queue.repeatMode,
             shuffle = queue.shuffle,
+            volume = volume,
             error = error,
         )
     }

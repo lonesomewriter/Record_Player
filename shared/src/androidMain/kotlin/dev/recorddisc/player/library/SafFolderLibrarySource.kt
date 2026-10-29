@@ -53,7 +53,8 @@ class SafFolderLibrarySource(context: Context, private val treeUri: Uri) : Libra
                 artist = text(MediaMetadataRetriever.METADATA_KEY_ARTIST),
                 album = text(MediaMetadataRetriever.METADATA_KEY_ALBUM),
                 albumArtist = text(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
-                year = parseYear(text(MediaMetadataRetriever.METADATA_KEY_YEAR)),
+                // FLAC/Ogg often report only a date (e.g. "20220101T000000.000Z"), not a year.
+                year = parseYear(text(MediaMetadataRetriever.METADATA_KEY_YEAR)) ?: parseYear(text(MediaMetadataRetriever.METADATA_KEY_DATE)),
                 trackNumber = parseLeadingNumber(text(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)),
                 discNumber = parseLeadingNumber(text(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)),
                 genre = text(MediaMetadataRetriever.METADATA_KEY_GENRE),
