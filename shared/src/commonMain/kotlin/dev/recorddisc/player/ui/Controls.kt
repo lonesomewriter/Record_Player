@@ -141,9 +141,9 @@ fun ThinSlider(value: Float, onCommit: (Float) -> Unit, label: String, modifier:
 
 /** Cover art thumbnail, or the accent gradient when the song has none. */
 @Composable
-fun ArtThumb(artwork: ArtworkCache, location: String?, size: Dp, corner: Dp, modifier: Modifier = Modifier) {
-    val art by artwork.rememberArtwork(location, 160)
-    val shape = RoundedCornerShape(corner)
+fun ArtThumb(artwork: ArtworkCache, location: String?, size: Dp, corner: Dp, modifier: Modifier = Modifier, maxSizePx: Int = 160, round: Boolean = false) {
+    val art by artwork.rememberArtwork(location, maxSizePx)
+    val shape = if (round) CircleShape else RoundedCornerShape(corner)
     val base = Modifier.size(size).clip(shape).border(1.dp, Color.White.copy(alpha = 0.08f), shape)
     val image = art
     if (image != null) {

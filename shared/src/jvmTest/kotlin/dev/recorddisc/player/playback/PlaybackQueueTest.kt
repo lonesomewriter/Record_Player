@@ -80,6 +80,18 @@ class PlaybackQueueTest {
     }
 
     @Test
+    fun skipToJumpsWithinThePlayOrder() {
+        val q = queue()
+        q.setShuffle(true)
+        val target = q.playOrder[3]
+        assertTrue(q.skipTo(3))
+        assertEquals(target, q.current)
+        assertFalse(q.skipTo(5), "past the end")
+        assertFalse(q.skipTo(-1))
+        assertEquals(target, q.current)
+    }
+
+    @Test
     fun emptyQueueHasNoCurrentSong() {
         val q = PlaybackQueue()
         q.set(emptyList(), 0)

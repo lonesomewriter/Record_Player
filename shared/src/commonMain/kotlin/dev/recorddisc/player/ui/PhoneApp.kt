@@ -30,6 +30,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +59,8 @@ import dev.recorddisc.player.app.ScanState
 import dev.recorddisc.player.app.rememberArtwork
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.RepeatMode
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings }
 
@@ -65,7 +68,7 @@ private const val SOON = "Coming in a later update"
 
 /** The Android layout: the disc is home; Library, Playlists and Settings sit on its arc. */
 @Composable
-fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit) {
+fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<PhoneScreen> = emptyFlow()) {
     val settings = model.settings.collectAsState().value
     val dynamic = dynamicAccentColor()
     val accent = if (settings?.dynamicColor == true && dynamic != null) dynamic else Color(settings?.accentArgb ?: 0xFFE0A458)
@@ -78,7 +81,7 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit) {
             if (!settings.setupDone) {
                 PhoneWelcome(scan, spin, model.platform::folderLabel, onChooseFolder, model::cancelScan) { model.finishSetup() }
             } else {
-                PhoneScreens(model, state, spin)
+                PhoneScreens(model, state, spin, openRequests)
             }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
         }
@@ -86,8 +89,10 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit) {
 }
 
 @Composable
-private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: DiscSpin) {
+private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>) {
     var screen by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    // e.g. the playback notification was tapped: show Now Playing.
+    LaunchedEffect(openRequests) { openRequests.collect { screen = it } }
     PlatformBackHandler(enabled = screen != PhoneScreen.Home) { screen = PhoneScreen.Home }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
     AnimatedContent(
@@ -100,7 +105,7 @@ private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: D
         when (shown) {
             PhoneScreen.Home -> PhoneHome(spin, art) { screen = it }
             PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = PhoneScreen.Home })
-            PhoneScreen.Library -> Placeholder("Library", "Browse songs, albums and artists here. This screen is built in the next step.") { screen = PhoneScreen.Home }
+            PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { screen = PhoneScreen.NowPlaying })
             PhoneScreen.Playlists -> Placeholder("Playlists", "Playlists are coming in a later update.", soon = true) { screen = PhoneScreen.Home }
             PhoneScreen.Settings -> Placeholder("Settings", "Settings are built in a later step of this part.") { screen = PhoneScreen.Home }
         }

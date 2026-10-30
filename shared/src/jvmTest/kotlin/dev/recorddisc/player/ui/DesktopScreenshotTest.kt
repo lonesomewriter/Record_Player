@@ -64,8 +64,14 @@ class DesktopScreenshotTest {
         Song("Copper Sky", "Lumen Field", "Northbound", 2022, "Folk", 312, intArrayOf(0xFFFF9F6E.toInt(), 0xFFB3402B.toInt(), 0xFF3A130D.toInt())),
     )
 
+    /** Two more albums, as in the Albums/Artists mockups, so artists can have more than one. */
+    private val moreSongs = songs + listOf(
+        Song("Low Tide", "Neon Coast", "Night Swim", 2021, "Synthwave", 201, intArrayOf(0xFF6FB3E0.toInt(), 0xFF285A7D.toInt(), 0xFF0F2233.toInt())),
+        Song("Paper Moons", "Lumen Field", "Paper Moons", 2019, "Folk", 233, intArrayOf(0xFFF0C674.toInt(), 0xFFB0703A.toInt(), 0xFF3A2410.toInt())),
+    )
+
     /** Holds the scan after [pauseAfter] files until [resume] completes. */
-    private inner class MockupPlatform(val pauseAfter: Int = Int.MAX_VALUE) : LibraryPlatform {
+    private inner class MockupPlatform(val pauseAfter: Int = Int.MAX_VALUE, val songs: List<Song> = this@DesktopScreenshotTest.songs) : LibraryPlatform {
         val resume = CompletableDeferred<Unit>()
         override val suggestedFolder = "/home/you/Music"
         override fun folderLabel(folder: String) = folder.replace("/home/you", "~")
@@ -91,8 +97,8 @@ class DesktopScreenshotTest {
     private fun <T> StateFlow<T>.await(check: (T) -> Boolean): T = runBlocking { withTimeout(5_000) { first(check) } }
 
     /** Draws a few seconds of frames (so the disc is mid-spin), then saves the last one. */
-    private fun shoot(model: AppModel, name: String, width: Int = 1440, height: Int = 852) {
-        val scene = ImageComposeScene(width, height, Density(1f)) { DesktopApp(model, chooseFolder = { null }) }
+    private fun shoot(model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home, library: LibraryNav? = null) {
+        val scene = ImageComposeScene(width, height, Density(1f)) { DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library) }
         try {
             var image = scene.render(0)
             for (frame in 1..90) {
@@ -139,5 +145,31 @@ class DesktopScreenshotTest {
         shoot(model, "04-home")
         shoot(model, "05-home-1100", width = 1100, height = 800)
         shoot(model, "06-home-narrow", width = 860, height = 1000)
+        shoot(model, "07-library", view = DesktopView.Library)
+        shoot(model, "08-library-narrow", width = 860, height = 1000, view = DesktopView.Library)
+        model.setLibraryQuery("lumen")
+        model.librarySongs.await { it.size == 1 }
+        shoot(model, "09-library-search", view = DesktopView.Library)
+    }
+
+    @Test
+    fun albumsAndArtists() {
+        val platform = MockupPlatform(songs = moreSongs)
+        val player = FakePlayer()
+        val model = model(platform, player)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 6 }
+        player.state.value = PlaybackState(tracks.map { it.toQueueItem() }, index = tracks.indexOfFirst { it.title == "Midnight Drive" }, durationMs = 222_000)
+        val albums = model.albums.await { it.size == 6 }
+        model.artists.await { it.size == 4 }
+        val afterHours = albums.first { it.name == "After Hours" }.key
+        shoot(model, "10-library-albums", view = DesktopView.Library, library = LibraryNav(LibraryTab.Albums))
+        shoot(model, "11-album", view = DesktopView.Library, library = LibraryNav(LibraryTab.Albums, LibraryPage.AlbumPage(afterHours)))
+        shoot(model, "12-library-artists", view = DesktopView.Library, library = LibraryNav(LibraryTab.Artists))
+        shoot(model, "13-artist", view = DesktopView.Library, library = LibraryNav(LibraryTab.Artists, LibraryPage.ArtistPage("Neon Coast")))
+        shoot(model, "14-library-albums-narrow", width = 860, height = 1000, view = DesktopView.Library, library = LibraryNav(LibraryTab.Albums))
     }
 }

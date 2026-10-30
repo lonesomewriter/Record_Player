@@ -265,7 +265,7 @@ fun PhoneTopRow() {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text("MUSIC", color = disc.text, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.24.em)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(disc.accentReadable))
+            LocalLight()
             Text("LOCAL", color = disc.muted, fontSize = 10.sp, letterSpacing = 0.2.em)
         }
     }

@@ -1,5 +1,6 @@
 package dev.recorddisc.player.ui
 
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -58,8 +59,8 @@ class DiscSpin {
 }
 
 /**
- * Turntable momentum, as in the mockups: speed eases up to full while [spinning] (about 1 s)
- * and coasts down when it stops (about 2 s), stopping at whatever angle it reached.
+ * Turntable momentum, as in the mockups: speed eases up to full while [spinning] and coasts down
+ * when it stops, stopping at whatever angle it reached. Both timings come from web-configs.json.
  */
 @Composable
 fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
@@ -77,8 +78,8 @@ fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
                 val dt = min((now - last) / 1_000_000f, 100f)
                 last = now
                 val goal = if (target) 1f else 0f
-                val timeConstant = if (goal > speed) SPIN_UP_MS else SPIN_DOWN_MS
-                speed += (goal - speed) * (1f - exp(-dt / timeConstant))
+                val timeConstant = if (goal > speed) WebConfigs.DISC_SPIN_UP_MS else WebConfigs.DISC_SPIN_DOWN_MS
+                speed = if (timeConstant <= 0f) goal else speed + (goal - speed) * (1f - exp(-dt / timeConstant))
                 if (goal == 0f && speed < 0.001f) {
                     speed = 0f
                     break
@@ -89,9 +90,6 @@ fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
     }
     return spin
 }
-
-private const val SPIN_UP_MS = 300f
-private const val SPIN_DOWN_MS = 600f
 
 /**
  * A vinyl record. The label shows [art] when there is cover art, otherwise an accent gradient
@@ -256,3 +254,31 @@ fun MarqueeRing(diameter: Dp, running: Boolean, modifier: Modifier = Modifier, f
         drawCircle(color.copy(alpha = 0.42f * alpha), this.size.minDimension / 2 - w, style = Stroke(w * 0.8f, cap = StrokeCap.Round, pathEffect = dots))
     }
 }
+
+/**
+ * The glowing dot beside "Local": fades to a quarter and back, slowly, as in the mockups (the
+ * speed comes from web-configs.json). It stays lit when the system asks for less motion.
+ */
+@Composable
+fun LocalLight(modifier: Modifier = Modifier) {
+    val color = disc.accentReadable
+    val glow = disc.accent
+    val reduceMotion = rememberReduceMotion()
+    val level = if (reduceMotion) {
+        1f
+    } else {
+        val t = rememberInfiniteTransition()
+        t.animateFloat(1f, 0f, infiniteRepeatable(tween(WebConfigs.LOCAL_BLINK_MS / 2, easing = EaseInOut), RepeatMode.Reverse)).value
+    }
+    Canvas(modifier.size(6.dp)) {
+        val opacity = 0.25f + 0.75f * level
+        val dot = this.size.minDimension / 2
+        // Like the mockup's box-shadow: a 10 dp glow that shrinks to 2 dp at the dimmest point.
+        val spread = dot + (2f + 8f * level).dp.toPx()
+        drawCircle(Brush.radialGradient(listOf(glow.copy(alpha = (0.4f + 0.4f * level) * opacity), Color.Transparent), center, spread), spread)
+        drawCircle(color.copy(alpha = opacity), dot)
+    }
+}
+
+/** CSS's ease-in-out. */
+private val EaseInOut = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)

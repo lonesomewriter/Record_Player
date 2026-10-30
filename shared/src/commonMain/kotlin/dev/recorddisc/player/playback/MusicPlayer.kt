@@ -50,6 +50,8 @@ interface MusicPlayer {
     fun play()
     fun pause()
     fun next()
+    /** Jumps to song [index] of [PlaybackState.queue] (the play order) and plays it. */
+    fun skipTo(index: Int)
     /** Restarts the song if more than [RESTART_THRESHOLD_MS] in, otherwise goes to the previous one. */
     fun previous()
     fun seekTo(positionMs: Long)

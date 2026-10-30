@@ -67,9 +67,10 @@ private const val SOON = "Coming in a later update"
  * The Linux layout: sidebar, main view, "Up next" queue and the dock. Below 1220 dp the queue
  * hides; below 900 dp the sidebar becomes a top bar and everything stacks.
  * [chooseFolder] opens the system folder dialog and returns the chosen path, or null.
+ * [startView] and [startLibrary] open a given view or Library page (used by the screenshot test).
  */
 @Composable
-fun DesktopApp(model: AppModel, chooseFolder: () -> String?) {
+fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopView = DesktopView.Home, startLibrary: LibraryNav? = null) {
     val settings = model.settings.collectAsState().value
     DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458)) {
         BoxWithConstraints(Modifier.fillMaxSize().background(disc.shell)) {
@@ -90,12 +91,12 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?) {
                     narrow = narrow,
                 )
             } else {
-                var view by remember { mutableStateOf(DesktopView.Home) }
+                var view by remember { mutableStateOf(startView) }
                 var queueOpen by remember { mutableStateOf(true) }
                 if (narrow) {
                     Column(Modifier.fillMaxSize()) {
                         TopNav(view) { view = it }
-                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, narrow = true) }
+                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, narrow = true, startLibrary) }
                         Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { view = DesktopView.Home }
                     }
                 } else {
@@ -103,7 +104,7 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?) {
                         Sidebar(model, view, if (roomForQueue) 236.dp else 210.dp) { view = it }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
-                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, narrow = false) }
+                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, narrow = false, startLibrary) }
                                 if (roomForQueue && queueOpen) QueuePanel(model, state)
                             }
                             Dock(model, state, narrow = false, queueOpen = queueOpen, onToggleQueue = if (roomForQueue) ({ queueOpen = !queueOpen }) else null) {
@@ -137,7 +138,7 @@ private fun Sidebar(model: AppModel, view: DesktopView, width: androidx.compose.
         Box(Modifier.fillMaxWidth().height(1.dp).background(disc.line))
         Column(Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Box(Modifier.size(6.dp).clip(CircleShape).background(disc.accentReadable))
+                LocalLight()
                 Text("LOCAL LIBRARY", color = disc.text, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.12.em)
             }
             Text(plural(count, "track").uppercase(), color = disc.muted, fontSize = 9.sp, letterSpacing = 0.12.em)
@@ -179,9 +180,76 @@ private fun TopNav(view: DesktopView, onSelect: (DesktopView) -> Unit) {
 }
 
 @Composable
-private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view: DesktopView, narrow: Boolean) {
-    val count = model.tracks.collectAsState().value.size
+private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view: DesktopView, narrow: Boolean, startLibrary: LibraryNav?) {
+    if (view == DesktopView.Library) {
+        LibraryView(model, state, narrow, startLibrary)
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = if (narrow) 18.dp else 34.dp, vertical = if (narrow) 22.dp else 28.dp)) {
+        ViewHeader(model, view)
+        when (view) {
+            DesktopView.Home -> HomeView(model, state, spin, narrow)
+            DesktopView.Library -> Unit
+            DesktopView.Playlists -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Playlists are coming in a later update.", color = disc.muted, fontSize = 13.sp)
+                SoonTag()
+            }
+            DesktopView.Settings -> Text("Settings are built in a later step of this part.", color = disc.muted, fontSize = 13.sp)
+        }
+    }
+}
+
+/**
+ * Library: header with the track count and Play all, then search, tabs and the songs, albums or
+ * artists; or an album or artist page. One lazy list, so large libraries only draw what's on screen.
+ */
+@Composable
+private fun LibraryView(model: AppModel, state: PlaybackState, narrow: Boolean, start: LibraryNav?) {
+    val nav = remember { start ?: LibraryNav() }
+    val songs by model.librarySongs.collectAsState()
+    val albums by model.libraryAlbums.collectAsState()
+    val artists by model.libraryArtists.collectAsState()
+    val allAlbums by model.albums.collectAsState()
+    val allArtists by model.artists.collectAsState()
+    val all by model.tracks.collectAsState()
+    val pad = if (narrow) 18.dp else 34.dp
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val grid = CardGrid(maxWidth - pad * 2)
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = pad, vertical = if (narrow) 22.dp else 28.dp)) {
+            when (val page = nav.page) {
+                is LibraryPage.AlbumPage -> desktopAlbumPage(model, allAlbums.firstOrNull { it.key == page.key }, nav, state.current?.id)
+                is LibraryPage.ArtistPage -> desktopArtistPage(model, allArtists.firstOrNull { it.name == page.name }, nav, state.current?.id, grid, showAlbum = !narrow)
+                null -> {
+                    item(key = "head") { ViewHeader(model, DesktopView.Library) }
+                    item(key = "bar") {
+                        Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LibrarySearch(model, Modifier.weight(1f), textSize = 12)
+                            LibraryTabs(nav.tab, textSize = 11) { nav.tab = it }
+                        }
+                    }
+                    when (nav.tab) {
+                        LibraryTab.Songs -> desktopSongTable(model, songs, state.current?.id, showAlbum = !narrow)
+                        LibraryTab.Albums -> {
+                            if (albums.isEmpty()) item(key = "noAlbums") { NoMatches(model, nav.tab) }
+                            desktopAlbumGrid(model, albums, grid, "album") { nav.open(LibraryPage.AlbumPage(it.key)) }
+                        }
+                        LibraryTab.Artists -> {
+                            if (artists.isEmpty()) item(key = "noArtists") { NoMatches(model, nav.tab) }
+                            desktopArtistGrid(model, artists, grid) { nav.open(LibraryPage.ArtistPage(it.name)) }
+                        }
+                    }
+                    if (all.isEmpty()) item(key = "none") { Text("Your library is empty.", color = disc.muted, fontSize = 13.sp) }
+                }
+            }
+        }
+    }
+}
+
+/** Eyebrow + title; Home adds the library pills, Library adds the count and Play all. */
+@Composable
+private fun ViewHeader(model: AppModel, view: DesktopView) {
+    val tracks by model.tracks.collectAsState()
+    val count = tracks.size
         Row(Modifier.fillMaxWidth().padding(bottom = 22.dp), verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f)) {
                 Eyebrow(
@@ -200,17 +268,21 @@ private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view
                     Pill("Offline")
                 }
             }
-        }
-        when (view) {
-            DesktopView.Home -> HomeView(model, state, spin, narrow)
-            DesktopView.Library -> Text("Browse songs, albums and artists here. This view is built in the next step.", color = disc.muted, fontSize = 13.sp)
-            DesktopView.Playlists -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Playlists are coming in a later update.", color = disc.muted, fontSize = 13.sp)
-                SoonTag()
+            if (view == DesktopView.Library) {
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Pill(plural(count, "track"))
+                    Row(
+                        Modifier.clip(RoundedCornerShape(12.dp)).border(1.dp, disc.line, RoundedCornerShape(12.dp))
+                            .clickable(enabled = tracks.isNotEmpty()) { model.play(tracks, 0); model.message("Playing all tracks") }
+                            .padding(horizontal = 15.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(DiscIcons.Play, null, Modifier.size(16.dp), tint = disc.text)
+                        Text("Play all", color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
-            DesktopView.Settings -> Text("Settings are built in a later step of this part.", color = disc.muted, fontSize = 13.sp)
         }
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -325,6 +397,7 @@ private fun QueuePanel(model: AppModel, state: PlaybackState) {
                             // The current song's accent bar on the left edge.
                             if (isCurrent) drawRoundRect(bar, androidx.compose.ui.geometry.Offset(0f, size.height / 2 - 12.dp.toPx()), androidx.compose.ui.geometry.Size(3.dp.toPx(), 24.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()))
                         }
+                        .clickable(onClickLabel = "Play ${item.title}") { model.player.skipTo(i) }
                         .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {

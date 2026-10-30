@@ -21,10 +21,12 @@ internal class FakePlayer : MusicPlayer {
     override fun play() { state.value = state.value.copy(isPlaying = true) }
     override fun pause() { state.value = state.value.copy(isPlaying = false) }
     override fun next() = Unit
+    override fun skipTo(index: Int) { state.value = state.value.copy(index = index, isPlaying = true) }
     override fun previous() = Unit
     override fun seekTo(positionMs: Long) = Unit
     override fun setRepeatMode(mode: RepeatMode) = Unit
-    override fun setShuffle(enabled: Boolean) = Unit
+    var shuffleOn = false
+    override fun setShuffle(enabled: Boolean) { shuffleOn = enabled }
     override fun setVolume(volume: Float) = Unit
     override fun release() = Unit
 }

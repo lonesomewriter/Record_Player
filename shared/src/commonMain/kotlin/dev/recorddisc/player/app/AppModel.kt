@@ -1,15 +1,21 @@
 package dev.recorddisc.player.app
 
 import androidx.compose.ui.graphics.ImageBitmap
+import dev.recorddisc.player.library.Album
+import dev.recorddisc.player.library.Artist
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibraryScanner
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.SettingEntity
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.groupAlbums
+import dev.recorddisc.player.library.groupArtists
+import dev.recorddisc.player.library.searchText
 import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -20,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -63,6 +70,28 @@ class AppModel(
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     val tracks: StateFlow<List<TrackEntity>> = tracksDao.observeAll().stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    private val _libraryQuery = MutableStateFlow("")
+    /** The Library's search text. */
+    val libraryQuery: StateFlow<String> = _libraryQuery.asStateFlow()
+
+    /** The Library's song list: everything, or the songs matching [libraryQuery] by title, artist, album or file name. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val librarySongs: StateFlow<List<TrackEntity>> = _libraryQuery
+        .flatMapLatest { q -> if (q.isBlank()) tracks else tracksDao.searchText(q.trim()) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** Every album and artist, for their pages. */
+    val albums: StateFlow<List<Album>> = tracks.map(::groupAlbums).stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val artists: StateFlow<List<Artist>> = tracks.map(::groupArtists).stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** The Library's Albums and Artists tabs: those with a song matching [libraryQuery]. */
+    val libraryAlbums: StateFlow<List<Album>> = librarySongs.map(::groupAlbums).stateIn(scope, SharingStarted.Eagerly, emptyList())
+    val libraryArtists: StateFlow<List<Artist>> = librarySongs.map(::groupArtists).stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    fun setLibraryQuery(text: String) {
+        _libraryQuery.value = text
+    }
 
     private val _scan = MutableStateFlow<ScanState>(ScanState.Idle)
     val scan: StateFlow<ScanState> = _scan.asStateFlow()
@@ -133,6 +162,13 @@ class AppModel(
     }
 
     fun play(tracks: List<TrackEntity>, index: Int) = loadQueue(tracks, play = true, index)
+
+    /** An album's or artist's Play (in order) and Shuffle buttons. */
+    fun playAll(tracks: List<TrackEntity>, shuffle: Boolean) {
+        if (tracks.isEmpty()) return
+        player.setShuffle(shuffle)
+        play(tracks, if (shuffle) tracks.indices.random() else 0)
+    }
 
     /** The disc's play button: starts the library if nothing is queued yet. */
     fun togglePlay() {

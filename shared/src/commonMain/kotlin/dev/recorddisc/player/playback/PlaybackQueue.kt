@@ -59,6 +59,13 @@ class PlaybackQueue(private val random: Random = Random.Default) {
         return true
     }
 
+    /** Jumps to position [position] of the play order. Returns false if there is no such position. */
+    fun skipTo(position: Int): Boolean {
+        if (position !in order.indices) return false
+        index = position
+        return true
+    }
+
     /** Moves to the previous song; at the start it wraps only with repeat-all. Returns false if there is none. */
     fun movePrevious(): Boolean {
         if (index < 0) return false

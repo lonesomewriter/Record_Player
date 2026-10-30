@@ -96,6 +96,17 @@ class DesktopPlayerTest {
     }
 
     @Test
+    fun skipToJumpsToASongAndPlaysIt() {
+        val p = player()
+        val songs = listOf(tone("flac"), tone("ogg"), tone("opus"))
+        p.setQueue(songs, playWhenReady = false)
+        p.await(what = "loaded") { it.index == 0 && it.durationMs != null }
+        p.skipTo(2)
+        val s = p.await(what = "third song playing") { it.index == 2 && it.isPlaying && it.positionMs > 200 }
+        assertEquals(songs[2], s.current)
+    }
+
+    @Test
     fun repeatOneReplaysTheSong() {
         val p = player()
         p.setRepeatMode(RepeatMode.One)

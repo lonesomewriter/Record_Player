@@ -1,5 +1,7 @@
 package dev.recorddisc.player.playback
 
+import android.app.PendingIntent
+import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
@@ -10,6 +12,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import dev.recorddisc.player.MainActivity
 
 /**
  * Keeps music playing in the background and provides the lock-screen / notification controls.
@@ -32,7 +35,15 @@ class PlaybackService : MediaSessionService() {
             // On by default: sends playback statistics to Android's MediaMetrics service, which Google may collect.
             .setUsePlatformDiagnostics(false)
             .build()
-        session = MediaSession.Builder(this, CurrentFirstShuffle(exo)).setCallback(Callback).build()
+        // Tapping the notification or the lock-screen player opens the app on Now Playing.
+        val open = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_NOW_PLAYING),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        session = MediaSession.Builder(this, CurrentFirstShuffle(exo)).setCallback(Callback).setSessionActivity(open).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

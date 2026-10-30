@@ -31,6 +31,18 @@ No accounts, ads, analytics or network access.
 ./gradlew :desktopApp:packageDeb             # build a .deb package
 ```
 
+## Animation settings (`web-configs.json`)
+
+Timings you can tune without touching the code. They're read when the app is **built** and compiled in, so rebuild after changing them. The app never downloads this file or anything else.
+
+| Key | Default | Allowed | What it does |
+|---|---|---|---|
+| `localLight.blinkSeconds` | `2.4` | 0.5–10 | One full fade out and back of the glowing dot beside "Local". |
+| `disc.spinUpMs` | `300` | 0–10000 | How quickly the disc speeds up when music starts. Bigger is slower; `0` is instant. |
+| `disc.spinDownMs` | `600` | 0–10000 | How quickly the disc coasts to a stop when music stops. Bigger is longer; `0` stops at once. |
+
+A missing or out-of-range value stops the build with a message naming the key. When the system asks for less motion (Android with animations off), the dot stays lit and the disc doesn't turn, whatever these say.
+
 ## Contributing
 
 Read [AGENTS.md](AGENTS.md) and the files in [project-guidelines/](project-guidelines/) before changing anything. They apply to people and AI agents alike.

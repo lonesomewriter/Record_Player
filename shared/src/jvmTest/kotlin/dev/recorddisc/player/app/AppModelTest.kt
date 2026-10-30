@@ -121,6 +121,49 @@ class AppModelTest {
     }
 
     @Test
+    fun librarySearchMatchesTitlesArtistsAndAlbums() {
+        val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
+        model.scan("/music")
+        model.librarySongs.await("all songs") { it.size == 3 }
+        model.setLibraryQuery("neon")
+        assertEquals(listOf("Midnight Drive", "Paper Lanterns"), model.librarySongs.await("artist match") { it.size == 2 }.map { it.title })
+        model.setLibraryQuery("slow light")
+        assertEquals(listOf("Static Bloom"), model.librarySongs.await("album match") { it.size == 1 }.map { it.title })
+        model.setLibraryQuery("100%")
+        model.librarySongs.await("no match; % taken literally") { it.isEmpty() }
+        model.setLibraryQuery("")
+        model.librarySongs.await("all again") { it.size == 3 }
+    }
+
+    @Test
+    fun albumsAndArtistsFollowTheSearch() {
+        val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
+        model.scan("/music")
+        assertEquals(listOf("After Hours", "Slow Light"), model.libraryAlbums.await("all albums") { it.size == 2 }.map { it.name })
+        assertEquals(listOf("Mira Vale", "Neon Coast"), model.libraryArtists.await("all artists") { it.size == 2 }.map { it.name })
+        model.setLibraryQuery("static")
+        assertEquals(listOf("Slow Light"), model.libraryAlbums.await("matching album") { it.size == 1 }.map { it.name })
+        assertEquals(listOf("Mira Vale"), model.libraryArtists.await("matching artist") { it.size == 1 }.map { it.name })
+        // Pages always show the whole album or artist.
+        assertEquals(2, model.albums.value.size)
+    }
+
+    @Test
+    fun albumPlayAndShuffleSetShuffleAndStartPlaying() {
+        val player = FakePlayer()
+        val model = AppModel(database(), player, FakePlatform(), scope)
+        model.scan("/music")
+        val album = model.albums.await("albums") { it.size == 2 }.first { it.name == "After Hours" }
+        model.playAll(album.tracks, shuffle = true)
+        assertTrue(player.shuffleOn)
+        assertEquals(album.tracks.map { it.id }, player.queues.last().first.map { it.id })
+        assertTrue(player.queues.last().third)
+        model.playAll(album.tracks, shuffle = false)
+        assertEquals(false, player.shuffleOn)
+        assertEquals(0, player.queues.last().second)
+    }
+
+    @Test
     fun accentChoicesAreSaved() {
         val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
         model.setAccent(AccentPreset.Mint)

@@ -142,9 +142,14 @@ class AndroidPlayerTest {
         assertEquals(0, s.index)
         assertEquals(songs[2], s.current)
         assertEquals(songs.toSet(), s.queue.toSet())
+        // Jump to the last song of the shuffled order.
+        val last = s.queue.last()
+        player.skipTo(3)
+        await(what = "skipped to the last shuffled song") { it.current == last && it.isPlaying }
+        player.pause()
         player.setShuffle(false)
         val back = await(what = "unshuffled") { !it.shuffle }
         assertEquals(songs, back.queue)
-        assertEquals(songs[2], back.current)
+        assertEquals(last, back.current)
     }
 }

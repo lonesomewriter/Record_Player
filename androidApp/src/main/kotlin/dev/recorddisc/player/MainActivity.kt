@@ -10,9 +10,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import dev.recorddisc.player.ui.PhoneApp
+import dev.recorddisc.player.ui.PhoneScreen
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 
 class MainActivity : ComponentActivity() {
     private val model get() = (application as RecordDiscApplication).model
+
+    /** Screens to open, e.g. Now Playing when the notification is tapped; each is handled once. */
+    private val openRequests = Channel<PhoneScreen>(Channel.CONFLATED)
 
     /** Android's own folder picker; the app only ever sees the folder chosen here. */
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -29,9 +35,27 @@ class MainActivity : ComponentActivity() {
         // The app is always dark, so keep the system bar icons light.
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
+        // On a rotation the screen is restored instead; don't reopen Now Playing over it.
+        if (savedInstanceState == null) handleOpen(intent)
 
         setContent {
-            PhoneApp(model, onChooseFolder = { pickFolder.launch(null) })
+            PhoneApp(model, onChooseFolder = { pickFolder.launch(null) }, openRequests = openRequests.receiveAsFlow())
         }
+    }
+
+    /** The app is already open (singleTop): the notification brings it back here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpen(intent)
+    }
+
+    private fun handleOpen(intent: Intent?) {
+        if (intent?.getStringExtra(EXTRA_OPEN) == OPEN_NOW_PLAYING) openRequests.trySend(PhoneScreen.NowPlaying)
+    }
+
+    companion object {
+        const val EXTRA_OPEN = "dev.recorddisc.player.OPEN"
+        const val OPEN_NOW_PLAYING = "nowPlaying"
     }
 }

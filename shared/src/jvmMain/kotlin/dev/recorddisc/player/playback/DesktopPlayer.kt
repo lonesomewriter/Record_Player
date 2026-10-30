@@ -76,6 +76,14 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
         }
     }
 
+    override fun skipTo(index: Int) = command {
+        if (queue.skipTo(index)) {
+            error = null
+            playing = true
+            loadCurrent()
+        }
+    }
+
     override fun previous() = command {
         if (queue.current == null) return@command
         val position = gst.positionMs() ?: 0

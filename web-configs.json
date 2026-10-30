@@ -1,0 +1,9 @@
+{
+  "localLight": {
+    "blinkSeconds": 2.4
+  },
+  "disc": {
+    "spinUpMs": 300,
+    "spinDownMs": 600
+  }
+}

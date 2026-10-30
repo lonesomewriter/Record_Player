@@ -141,6 +141,15 @@ class AndroidPlayer(context: Context) : MusicPlayer {
         if (c.playbackState == Player.STATE_IDLE) c.prepare()
     }
 
+    override fun skipTo(index: Int) = command { c ->
+        val window = playOrder(c).getOrNull(index) ?: return@command
+        pendingSeekMs = null
+        error = null
+        c.seekTo(window, 0)
+        if (c.playbackState == Player.STATE_IDLE) c.prepare()
+        c.play()
+    }
+
     // Media3's rule matches ours: restart if more than 3 s in (its default), otherwise go back.
     override fun previous() = command { c ->
         pendingSeekMs = null
@@ -196,13 +205,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             _state.value = PlaybackState(error = error)
             return
         }
-        val timeline = c.currentTimeline
-        val order = ArrayList<Int>(timeline.windowCount)
-        var i = timeline.getFirstWindowIndex(c.shuffleModeEnabled)
-        while (i != C.INDEX_UNSET) {
-            order += i
-            i = timeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
-        }
+        val order = playOrder(c)
         val queue = order.map { c.getMediaItemAt(it).toQueueItem() }
         val current = queue.getOrNull(order.indexOf(c.currentMediaItemIndex))
         _state.value = PlaybackState(
@@ -220,6 +223,18 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             volume = c.volume,
             error = error,
         )
+    }
+
+    /** Media item indices in the order they play (the shuffled order when shuffle is on). */
+    private fun playOrder(c: MediaController): List<Int> {
+        val timeline = c.currentTimeline
+        val order = ArrayList<Int>(timeline.windowCount)
+        var i = timeline.getFirstWindowIndex(c.shuffleModeEnabled)
+        while (i != C.INDEX_UNSET) {
+            order += i
+            i = timeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+        }
+        return order
     }
 
     private fun MediaItem.toQueueItem(): QueueItem = known[mediaId] ?: QueueItem(
