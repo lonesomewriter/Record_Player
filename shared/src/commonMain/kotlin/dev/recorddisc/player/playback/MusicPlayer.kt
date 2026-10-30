@@ -45,8 +45,8 @@ data class PlaybackState(
 interface MusicPlayer {
     val state: StateFlow<PlaybackState>
 
-    /** Replaces the queue and starts at [startIndex] (an index into [items], before any shuffle). */
-    fun setQueue(items: List<QueueItem>, startIndex: Int = 0, playWhenReady: Boolean = true)
+    /** Replaces the queue and starts at [startIndex] (an index into [items], before any shuffle), [startPositionMs] into that song. */
+    fun setQueue(items: List<QueueItem>, startIndex: Int = 0, playWhenReady: Boolean = true, startPositionMs: Long = 0)
     fun play()
     fun pause()
     fun next()

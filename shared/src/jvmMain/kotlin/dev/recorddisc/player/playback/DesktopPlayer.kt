@@ -17,9 +17,10 @@ import java.util.concurrent.Executors
  * Linux player: [GstPlayer] plus the [PlaybackQueue] rules. Every GStreamer call runs on one
  * dedicated thread, so commands and the progress ticker never overlap.
  *
- * [audioSink] is passed to [GstPlayer]; tests use "fakesink".
+ * [audioSink] is passed to [GstPlayer]; tests use "fakesink". With [gapless] on, the next song is
+ * handed to GStreamer shortly before the current one ends, so there's no silence between them.
  */
-class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
+class DesktopPlayer(audioSink: String? = null, gapless: Boolean = true) : MusicPlayer {
     private val executor = Executors.newSingleThreadExecutor { Thread(it, "gst-player").apply { isDaemon = true } }
     private val scope = CoroutineScope(SupervisorJob() + executor.asCoroutineDispatcher())
     private val gst = GstPlayer(audioSink)
@@ -32,8 +33,17 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
     private var error: String? = null
     /** Songs skipped in a row because they failed; stops playback once every song has failed. */
     private var failures = 0
+    private var gapless = gapless
+
+    /** What GStreamer may continue into when the current song ends (read on a GStreamer thread). */
+    @Volatile
+    private var upNext: QueueItem? = null
+    /** The song handed to GStreamer for gapless playback, until it starts. */
+    @Volatile
+    private var handedOver: QueueItem? = null
 
     init {
+        gst.nextFile = { upNext?.also { handedOver = it }?.location }
         scope.launch {
             while (isActive) {
                 tick()
@@ -42,7 +52,7 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
         }
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int, playWhenReady: Boolean) = command {
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, playWhenReady: Boolean, startPositionMs: Long) = command {
         queue.set(items, startIndex)
         failures = 0
         error = null
@@ -53,6 +63,10 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
             publish()
         } else {
             loadCurrent()
+            if (startPositionMs > 0 && queue.current != null) {
+                gst.seekMs(startPositionMs)
+                publish()
+            }
         }
     }
 
@@ -118,6 +132,12 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
         publish()
     }
 
+    /** Settings → "Gapless playback". */
+    fun setGapless(enabled: Boolean) = command {
+        gapless = enabled
+        publish()
+    }
+
     override fun release() {
         scope.cancel()
         executor.submit { gst.close() }.get()
@@ -131,6 +151,7 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
     /** Loads the current song, starts it if [playing], and skips it if it can't be played. */
     private fun loadCurrent() {
         val item = queue.current ?: return
+        handedOver = null
         val loadError = try {
             gst.load(item.location)
             gst.pollError()
@@ -161,6 +182,7 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
 
     private fun tick() {
         if (queue.current == null) return
+        if (gst.takeTrackChange()) followHandover()
         // Only checks for messages already waiting, so the ticker never delays commands.
         if (playing && gst.awaitEnd(1)) {
             val endError = gst.pollError()
@@ -180,8 +202,22 @@ class DesktopPlayer(audioSink: String? = null) : MusicPlayer {
         _state.update { it.copy(positionMs = gst.positionMs() ?: it.positionMs, durationMs = gst.durationMs() ?: it.durationMs) }
     }
 
+    /** GStreamer moved on into the handed-over song by itself; move the queue along with it. */
+    private fun followHandover() {
+        val expected = handedOver ?: return
+        handedOver = null
+        failures = 0
+        // If the queue changed in the meantime (shuffle, repeat), play what it says now instead.
+        if (!queue.moveNext(userInitiated = false) || queue.current?.id != expected.id) {
+            loadCurrent()
+        } else {
+            publish()
+        }
+    }
+
     private fun publish() {
         val item = queue.current
+        upNext = if (gapless) queue.peekNext() else null
         _state.value = PlaybackState(
             queue = queue.playOrder,
             index = queue.index,

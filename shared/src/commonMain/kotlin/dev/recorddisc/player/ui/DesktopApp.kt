@@ -67,10 +67,18 @@ private const val SOON = "Coming in a later update"
  * The Linux layout: sidebar, main view, "Up next" queue and the dock. Below 1220 dp the queue
  * hides; below 900 dp the sidebar becomes a top bar and everything stacks.
  * [chooseFolder] opens the system folder dialog and returns the chosen path, or null.
- * [startView] and [startLibrary] open a given view or Library page (used by the screenshot test).
+ * [startView], [startLibrary] and [startAccentPicker] open a given view, Library page or the
+ * custom accent dialog (used by the screenshot test). [appVersion] is shown in Settings → About.
  */
 @Composable
-fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopView = DesktopView.Home, startLibrary: LibraryNav? = null) {
+fun DesktopApp(
+    model: AppModel,
+    chooseFolder: () -> String?,
+    startView: DesktopView = DesktopView.Home,
+    startLibrary: LibraryNav? = null,
+    appVersion: String = "dev",
+    startAccentPicker: Boolean = false,
+) {
     val settings = model.settings.collectAsState().value
     DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458)) {
         BoxWithConstraints(Modifier.fillMaxSize().background(disc.shell)) {
@@ -80,6 +88,7 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopV
             val state by model.player.state.collectAsState()
             val scan by model.scan.collectAsState()
             val spin = rememberDiscSpin(state.isPlaying || scan is ScanState.Running, periodMs = 18_000f)
+            var picking by remember { mutableStateOf(startAccentPicker) }
             if (!settings.setupDone) {
                 var folder by remember { mutableStateOf(model.platform.suggestedFolder) }
                 DesktopWelcome(
@@ -93,10 +102,11 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopV
             } else {
                 var view by remember { mutableStateOf(startView) }
                 var queueOpen by remember { mutableStateOf(true) }
+                val main = MainContext(narrow, startLibrary, appVersion, chooseFolder) { picking = true }
                 if (narrow) {
                     Column(Modifier.fillMaxSize()) {
                         TopNav(view) { view = it }
-                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, narrow = true, startLibrary) }
+                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, main) }
                         Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { view = DesktopView.Home }
                     }
                 } else {
@@ -104,7 +114,7 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopV
                         Sidebar(model, view, if (roomForQueue) 236.dp else 210.dp) { view = it }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
-                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, narrow = false, startLibrary) }
+                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, main) }
                                 if (roomForQueue && queueOpen) QueuePanel(model, state)
                             }
                             Dock(model, state, narrow = false, queueOpen = queueOpen, onToggleQueue = if (roomForQueue) ({ queueOpen = !queueOpen }) else null) {
@@ -112,6 +122,12 @@ fun DesktopApp(model: AppModel, chooseFolder: () -> String?, startView: DesktopV
                             }
                         }
                     }
+                }
+            }
+            if (settings.setupDone && picking) {
+                AccentPicker(settings.customAccent, eyebrow = "Appearance", onCancel = { picking = false }) {
+                    model.setCustomAccent(it)
+                    picking = false
                 }
             }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 104.dp))
@@ -179,10 +195,20 @@ private fun TopNav(view: DesktopView, onSelect: (DesktopView) -> Unit) {
     }
 }
 
+/** What the main view needs besides the model and player state. */
+private class MainContext(
+    val narrow: Boolean,
+    val startLibrary: LibraryNav?,
+    val appVersion: String,
+    val chooseFolder: () -> String?,
+    val onCustomAccent: () -> Unit,
+)
+
 @Composable
-private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view: DesktopView, narrow: Boolean, startLibrary: LibraryNav?) {
+private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view: DesktopView, main: MainContext) {
+    val narrow = main.narrow
     if (view == DesktopView.Library) {
-        LibraryView(model, state, narrow, startLibrary)
+        LibraryView(model, state, narrow, main.startLibrary)
         return
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = if (narrow) 18.dp else 34.dp, vertical = if (narrow) 22.dp else 28.dp)) {
@@ -194,7 +220,7 @@ private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view
                 Text("Playlists are coming in a later update.", color = disc.muted, fontSize = 13.sp)
                 SoonTag()
             }
-            DesktopView.Settings -> Text("Settings are built in a later step of this part.", color = disc.muted, fontSize = 13.sp)
+            DesktopView.Settings -> DesktopSettings(model, narrow, main.appVersion, main.chooseFolder, main.onCustomAccent)
         }
     }
 }
@@ -262,6 +288,7 @@ private fun ViewHeader(model: AppModel, view: DesktopView) {
                 )
                 Text(view.title, Modifier.padding(top = 5.dp), color = disc.text, fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.035).em)
             }
+            if (view == DesktopView.Settings) Pill("Stored locally")
             if (view == DesktopView.Home) {
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     Pill("Local · ${plural(count, "track")}")

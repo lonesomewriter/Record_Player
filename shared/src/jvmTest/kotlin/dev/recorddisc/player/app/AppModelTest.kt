@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -103,6 +105,90 @@ class AppModelTest {
         player.state.await("library queued") { it.queue.size == 3 }
         assertEquals(false, player.state.value.isPlaying)
         assertEquals(ScanState.Idle, again.scan.value, "the startup rescan runs quietly")
+    }
+
+    /** First run on /music in [file], ready to use. */
+    private fun setUp(file: File, player: FakePlayer = FakePlayer(), platform: FakePlatform = FakePlatform()): AppModel {
+        val model = AppModel(database(file), player, platform, scope)
+        model.scan("/music")
+        model.scan.await("scan done") { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await("setup done") { it?.setupDone == true }
+        return model
+    }
+
+    @Test
+    fun resumeOnStartReopensTheQueueWhereItWasLeftPaused() {
+        val file = File(tmp.root, "resume.db")
+        val firstPlayer = FakePlayer()
+        val first = setUp(file, firstPlayer)
+        val library = first.tracks.await("tracks") { it.size == 3 }
+        first.play(library, 1)
+        firstPlayer.seekTo(83_000)
+        firstPlayer.pause()
+        // Saving happens in the background; wait until the paused position is stored.
+        val saved = database(file).settings()
+        runBlocking { withTimeout(5_000) { while (saved.observeAll().first().none { it.name == "resumePosition" && it.value == "83000" }) delay(50) } }
+
+        val player = FakePlayer()
+        AppModel(database(file), player, FakePlatform(), scope)
+        val restored = player.state.await("queue restored") { it.queue.size == 3 }
+        assertEquals(library[1].id, restored.current?.id)
+        assertEquals(false, restored.isPlaying)
+        assertEquals(83_000, restored.positionMs, "same position")
+    }
+
+    @Test
+    fun withResumeOffTheLibraryStartsFromTheTop() {
+        val file = File(tmp.root, "noresume.db")
+        val firstPlayer = FakePlayer()
+        val first = setUp(file, firstPlayer)
+        first.play(first.tracks.await("tracks") { it.size == 3 }, 2)
+        first.setFlag(AppSettings.RESUME_ON_START, false)
+        first.settings.await("resume off") { it?.resumeOnStart == false }
+        Thread.sleep(300)
+
+        val player = FakePlayer()
+        AppModel(database(file), player, FakePlatform(), scope)
+        val queued = player.state.await("library queued") { it.queue.size == 3 }
+        assertEquals(0, queued.index)
+        assertEquals(0, queued.positionMs)
+    }
+
+    @Test
+    fun changingTheFolderReplacesTheLibraryButAnEmptyFolderDoesNot() {
+        val platform = FakePlatform()
+        val model = setUp(File(tmp.root, "change.db"), platform = platform)
+        val messages = ArrayList<String>()
+        scope.launch { model.messages.collect { messages += it } }
+        Thread.sleep(100)
+
+        model.scan("/empty")
+        runBlocking { withTimeout(5_000) { while (messages.isEmpty()) delay(20) } }
+        assertTrue(messages.last().startsWith("No music found"), messages.last())
+        assertEquals(3, model.tracks.value.size)
+        assertEquals("/music", model.settings.value?.musicFolder)
+        assertEquals(ScanState.Idle, model.scan.value, "Settings scans don't show the first-run screens")
+
+        model.scan("/other")
+        model.settings.await("new folder saved") { it?.musicFolder == "/other" }
+        assertEquals(listOf("Copper Sky"), model.tracks.await("library replaced") { it.size == 1 }.map { it.title })
+        assertEquals(listOf("/music"), platform.released, "the old folder's access is given back")
+    }
+
+    @Test
+    fun watchedFolderRescansAfterChangesSettle() {
+        val platform = FakePlatform()
+        val model = setUp(File(tmp.root, "watch.db"), platform = platform)
+        val (folder, signal) = runBlocking { withTimeout(5_000) { while (platform.watching == null) delay(20); platform.watching!! } }
+        assertEquals("/music", folder)
+        platform.folders["/music"] = platform.folders.getValue("/music") + Triple("Low Tide", "Neon Coast", "Night Swim")
+        signal()
+        signal()
+        model.tracks.await("new song picked up") { it.size == 4 }
+
+        model.setFlag(AppSettings.WATCH_FOLDER, false)
+        runBlocking { withTimeout(5_000) { while (platform.watching != null) delay(20) } }
     }
 
     @Test

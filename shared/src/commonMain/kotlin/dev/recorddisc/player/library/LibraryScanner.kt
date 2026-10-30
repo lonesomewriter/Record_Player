@@ -33,12 +33,16 @@ object AudioFormats {
     fun isSupported(fileName: String): Boolean = extensionOf(fileName) in extensions
 }
 
-data class ScanResult(val added: Int, val updated: Int, val removed: Int, val unchanged: Int, val unreadable: Int)
+/** [found] is the number of audio files in the source. */
+data class ScanResult(val found: Int, val added: Int, val updated: Int, val removed: Int, val unchanged: Int, val unreadable: Int)
 
 /**
  * Brings the database in line with a [LibrarySource]. Only new or changed files (by size and
  * modification time) are read; files that disappeared are removed. Files whose tags can't be
  * read are still listed so they remain playable.
+ *
+ * A source with no audio files at all leaves the library untouched: that is far more often a
+ * folder that's unavailable (an unplugged drive) or the wrong folder than music really deleted.
  */
 class LibraryScanner(private val dao: TrackDao) {
     /** [onProgress] gets the number of audio files checked so far and the current file name. */
@@ -76,10 +80,11 @@ class LibraryScanner(private val dao: TrackDao) {
         }
         if (pending.isNotEmpty()) dao.upsert(pending)
 
+        if (seen.isEmpty()) return ScanResult(0, 0, 0, 0, 0, 0)
         val gone = known.keys - seen
         // SQLite limits the number of bound parameters, so delete in chunks.
         gone.chunked(BATCH).forEach { dao.deleteByLocations(it) }
-        return ScanResult(added, updated, gone.size, unchanged, unreadable)
+        return ScanResult(seen.size, added, updated, gone.size, unchanged, unreadable)
     }
 
     private fun toEntity(id: Long, file: FileEntry, tags: TrackTags?) = TrackEntity(

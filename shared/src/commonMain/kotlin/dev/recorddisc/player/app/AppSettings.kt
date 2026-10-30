@@ -21,8 +21,13 @@ data class AppSettings(
     val customAccent: Long = AccentPreset.Gold.argb,
     /** Android 12+: take the accent from the wallpaper. */
     val dynamicColor: Boolean = true,
+    /** Reopen the last queue at the same song and position (paused) when the app starts. */
     val resumeOnStart: Boolean = true,
     val pauseOnUnplug: Boolean = true,
+    /** Desktop: start the next song with no silence between tracks. */
+    val gapless: Boolean = true,
+    /** Desktop: rescan by itself when files in the music folder change. */
+    val watchFolder: Boolean = true,
 ) {
     val accentArgb: Long get() = accent?.argb ?: customAccent
 
@@ -34,6 +39,8 @@ data class AppSettings(
         const val DYNAMIC_COLOR = "dynamicColor"
         const val RESUME_ON_START = "resumeOnStart"
         const val PAUSE_ON_UNPLUG = "pauseOnUnplug"
+        const val GAPLESS = "gapless"
+        const val WATCH_FOLDER = "watchFolder"
         const val CUSTOM = "Custom"
 
         fun from(values: Map<String, String>): AppSettings {
@@ -52,6 +59,8 @@ data class AppSettings(
                 dynamicColor = flag(DYNAMIC_COLOR, d.dynamicColor),
                 resumeOnStart = flag(RESUME_ON_START, d.resumeOnStart),
                 pauseOnUnplug = flag(PAUSE_ON_UNPLUG, d.pauseOnUnplug),
+                gapless = flag(GAPLESS, d.gapless),
+                watchFolder = flag(WATCH_FOLDER, d.watchFolder),
             )
         }
     }

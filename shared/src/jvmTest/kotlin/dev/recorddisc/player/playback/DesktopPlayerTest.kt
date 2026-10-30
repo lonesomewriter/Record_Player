@@ -28,8 +28,8 @@ class DesktopPlayerTest {
     @After
     fun releasePlayers() = players.forEach { it.release() }
 
-    private fun player(): DesktopPlayer {
-        val p = runCatching { DesktopPlayer(audioSink = "fakesink") }.getOrNull()
+    private fun player(gapless: Boolean = true): DesktopPlayer {
+        val p = runCatching { DesktopPlayer(audioSink = "fakesink", gapless = gapless) }.getOrNull()
         assumeTrue("GStreamer is not installed", p != null)
         return p!!.also { players += it }
     }
@@ -156,5 +156,33 @@ class DesktopPlayerTest {
         val back = p.await(what = "unshuffled") { !it.shuffle }
         assertEquals(songs, back.queue)
         assertEquals(songs[2], back.current)
+    }
+
+    @Test
+    fun withoutGaplessTheQueueStillPlaysThrough() {
+        val p = player(gapless = false)
+        p.setQueue(listOf(tone("flac"), tone("ogg")))
+        p.await(what = "second song playing") { it.index == 1 && it.isPlaying && it.positionMs > 300 }
+        p.await(what = "stopped at the end") { !it.isPlaying }
+    }
+
+    @Test
+    fun gaplessMovesTheQueueAlongWithTheAudio() {
+        val p = player()
+        p.setQueue(listOf(tone("flac"), tone("ogg"), tone("opus")))
+        val start = System.nanoTime()
+        p.await(what = "second song playing") { it.index == 1 && it.isPlaying }
+        val switched = (System.nanoTime() - start) / 1_000_000
+        assertTrue(switched in 1_500..2_600, "moved on when the first song ended, after $switched ms")
+        p.await(what = "third song playing") { it.index == 2 && it.isPlaying }
+        p.await(what = "stopped at the end") { !it.isPlaying }
+    }
+
+    @Test
+    fun queueCanStartPartWayIntoASong() {
+        val p = player()
+        p.setQueue(listOf(tone("flac"), tone("ogg")), startIndex = 1, playWhenReady = false, startPositionMs = 1_200)
+        val s = p.await(what = "loaded at 1.2 s") { it.index == 1 && it.positionMs in 1_100..1_300 }
+        assertFalse(s.isPlaying)
     }
 }

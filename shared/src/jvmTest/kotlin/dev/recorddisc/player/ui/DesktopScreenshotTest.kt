@@ -97,8 +97,10 @@ class DesktopScreenshotTest {
     private fun <T> StateFlow<T>.await(check: (T) -> Boolean): T = runBlocking { withTimeout(5_000) { first(check) } }
 
     /** Draws a few seconds of frames (so the disc is mid-spin), then saves the last one. */
-    private fun shoot(model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home, library: LibraryNav? = null) {
-        val scene = ImageComposeScene(width, height, Density(1f)) { DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library) }
+    private fun shoot(model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home, library: LibraryNav? = null, picker: Boolean = false) {
+        val scene = ImageComposeScene(width, height, Density(1f)) {
+            DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0", startAccentPicker = picker)
+        }
         try {
             var image = scene.render(0)
             for (frame in 1..90) {
@@ -150,6 +152,13 @@ class DesktopScreenshotTest {
         model.setLibraryQuery("lumen")
         model.librarySongs.await { it.size == 1 }
         shoot(model, "09-library-search", view = DesktopView.Library)
+        model.setLibraryQuery("")
+        shoot(model, "15-settings", view = DesktopView.Settings)
+        shoot(model, "16-settings-narrow", width = 860, height = 1000, view = DesktopView.Settings)
+        model.setCustomAccent(0xFF3674B3)
+        model.settings.await { it?.accent == null }
+        shoot(model, "17-accent-picker", view = DesktopView.Settings, picker = true)
+        shoot(model, "18-settings-custom-accent", view = DesktopView.Settings)
     }
 
     @Test

@@ -81,7 +81,7 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<Pho
             if (!settings.setupDone) {
                 PhoneWelcome(scan, spin, model.platform::folderLabel, onChooseFolder, model::cancelScan) { model.finishSetup() }
             } else {
-                PhoneScreens(model, state, spin, openRequests)
+                PhoneScreens(model, state, spin, openRequests, onChooseFolder)
             }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
         }
@@ -89,8 +89,9 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<Pho
 }
 
 @Composable
-private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>) {
+private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>, onChooseFolder: () -> Unit) {
     var screen by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var picking by rememberSaveable { mutableStateOf(false) }
     // e.g. the playback notification was tapped: show Now Playing.
     LaunchedEffect(openRequests) { openRequests.collect { screen = it } }
     PlatformBackHandler(enabled = screen != PhoneScreen.Home) { screen = PhoneScreen.Home }
@@ -107,11 +108,19 @@ private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: D
             PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = PhoneScreen.Home })
             PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { screen = PhoneScreen.NowPlaying })
             PhoneScreen.Playlists -> Placeholder("Playlists", "Playlists are coming in a later update.", soon = true) { screen = PhoneScreen.Home }
-            PhoneScreen.Settings -> Placeholder("Settings", "Settings are built in a later step of this part.") { screen = PhoneScreen.Home }
+            PhoneScreen.Settings -> PhoneSettings(model, onBack = { screen = PhoneScreen.Home }, onChooseFolder, onCustomAccent = { picking = true })
         }
     }
     if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings) && state.current != null) {
         MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { screen = PhoneScreen.NowPlaying }
+    }
+    if (picking) {
+        PlatformBackHandler(enabled = true) { picking = false }
+        val start = model.settings.collectAsState().value?.customAccent ?: 0xFFE0A458
+        AccentPicker(start, onCancel = { picking = false }) {
+            model.setCustomAccent(it)
+            picking = false
+        }
     }
 }
 

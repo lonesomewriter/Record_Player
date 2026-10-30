@@ -13,6 +13,15 @@ import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dev.recorddisc.player.MainActivity
+import dev.recorddisc.player.RecordDiscApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * Keeps music playing in the background and provides the lock-screen / notification controls.
@@ -21,6 +30,7 @@ import dev.recorddisc.player.MainActivity
  */
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
         super.onCreate()
@@ -44,11 +54,17 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, CurrentFirstShuffle(exo)).setCallback(Callback).setSessionActivity(open).build()
+        // Settings → "Pause on headphone unplug".
+        scope.launch {
+            (application as RecordDiscApplication).model.settings.filterNotNull().map { it.pauseOnUnplug }.distinctUntilChanged()
+                .collect { exo.setHandleAudioBecomingNoisy(it) }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onDestroy() {
+        scope.cancel()
         session?.run {
             player.release()
             release()

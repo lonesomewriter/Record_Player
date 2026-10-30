@@ -10,6 +10,8 @@ import java.lang.foreign.ValueLayout.JAVA_DOUBLE
 import java.lang.foreign.ValueLayout.JAVA_INT
 import java.lang.foreign.ValueLayout.JAVA_LONG
 import java.lang.invoke.MethodHandle
+import java.lang.invoke.MethodHandles
+import java.lang.invoke.MethodType
 
 /**
  * Minimal audio player over the system GStreamer (playbin), called through Java's FFM API.
@@ -46,6 +48,8 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
         val setPtrProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS), Linker.Option.firstVariadicArg(2))
         val setIntProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_INT, ADDRESS), Linker.Option.firstVariadicArg(2))
         val setDoubleProp = fn(gobject, "g_object_set", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_DOUBLE, ADDRESS), Linker.Option.firstVariadicArg(2))
+        val signalConnect = fn(gobject, "g_signal_connect_data", FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT))
+        val signalDisconnect = fn(gobject, "g_signal_handler_disconnect", FunctionDescriptor.ofVoid(ADDRESS, JAVA_LONG))
 
         const val FORMAT_TIME = 3
         const val STATE_NULL = 1
@@ -54,6 +58,7 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
         const val SEEK_FLUSH_ACCURATE = 0x1 or 0x2
         const val MSG_EOS = 1
         const val MSG_ERROR = 2
+        const val MSG_STREAM_START = 1 shl 28
         const val PLAY_FLAG_AUDIO_SOFTVOL = 0x02 or 0x10 // audio only, software volume
 
         init {
@@ -65,6 +70,36 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     private val playbin: MemorySegment = (factoryMake.invoke(str("playbin"), str("player")) as MemorySegment)
         .also { require(it != MemorySegment.NULL) { "GStreamer playbin is not available" } }
     private val bus: MemorySegment = getBus.invoke(playbin) as MemorySegment
+    private val uriProperty = str("uri")
+
+    /**
+     * Gapless playback: asked (on a GStreamer thread) for the next file shortly before the
+     * current one ends. Returning a path makes playbin continue into it with no gap and no end
+     * of stream; null lets the stream end as usual. Must be quick and must not throw.
+     */
+    @Volatile
+    var nextFile: (() -> String?)? = null
+
+    /** A next file was handed over in about-to-finish and hasn't started yet. */
+    @Volatile
+    private var handedOver = false
+    @Volatile
+    private var nextPath: String? = null
+    /** The file playing now, and whether play() is in effect. */
+    private var currentPath: String? = null
+    private var playing = false
+    private var trackChanged = false
+
+    private val aboutToFinish: MemorySegment = linker.upcallStub(
+        MethodHandles.lookup()
+            .findVirtual(GstPlayer::class.java, "onAboutToFinish", MethodType.methodType(Void.TYPE, MemorySegment::class.java, MemorySegment::class.java))
+            .bindTo(this),
+        FunctionDescriptor.ofVoid(ADDRESS, ADDRESS),
+        arena,
+    )
+    private val aboutToFinishHandler = signalConnect.invoke(
+        playbin, str("about-to-finish"), aboutToFinish, MemorySegment.NULL, MemorySegment.NULL, 0,
+    ) as Long
 
     init {
         setIntProp.invoke(playbin, str("flags"), PLAY_FLAG_AUDIO_SOFTVOL, MemorySegment.NULL)
@@ -80,19 +115,17 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
         setState.invoke(playbin, STATE_NULL) as Int
         ended = false
         pendingError = null
-        Arena.ofConfined().use { a ->
-            val err = a.allocate(ADDRESS)
-            val uri = filenameToUri.invoke(a.allocateFrom(path), err) as MemorySegment
-            check(uri != MemorySegment.NULL) { "Invalid path: $path" }
-            setPtrProp.invoke(playbin, str("uri"), uri, MemorySegment.NULL)
-            gFree.invoke(uri)
-        }
+        handedOver = false
+        trackChanged = false
+        playing = false
+        check(setUri(path)) { "Invalid path: $path" }
+        currentPath = path
         setState.invoke(playbin, STATE_PAUSED) as Int
         waitForState()
     }
 
-    fun play() { setState.invoke(playbin, STATE_PLAYING) as Int }
-    fun pause() { setState.invoke(playbin, STATE_PAUSED) as Int; waitForState() }
+    fun play() { setState.invoke(playbin, STATE_PLAYING) as Int; playing = true }
+    fun pause() { setState.invoke(playbin, STATE_PAUSED) as Int; waitForState(); playing = false }
 
     /** Software volume, 0.0 (silent) to 1.0 (full). */
     fun setVolume(volume: Double) {
@@ -103,6 +136,14 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     fun durationMs(): Long? = query(queryDuration)
 
     fun seekMs(ms: Long): Boolean {
+        // Once the next file is queued for gapless playback, playbin doesn't seek the current one
+        // reliably; reload it first (it's then queued again near its end).
+        val path = currentPath
+        if (handedOver && path != null) {
+            val resume = playing
+            load(path)
+            if (resume) play()
+        }
         ended = false
         val ok = seekSimple.invoke(playbin, FORMAT_TIME, SEEK_FLUSH_ACCURATE, ms * 1_000_000) as Int != 0
         waitForState()
@@ -111,6 +152,35 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
 
     private var pendingError: String? = null
     private var ended = false
+
+    /** True once after playback continued into the file from [nextFile] (gapless). */
+    fun takeTrackChange(): Boolean {
+        while (nextMessage(0)) Unit
+        return trackChanged.also { trackChanged = false }
+    }
+
+    private fun setUri(path: String): Boolean = Arena.ofConfined().use { a ->
+        val err = a.allocate(ADDRESS)
+        val uri = filenameToUri.invoke(a.allocateFrom(path), err) as MemorySegment
+        if (uri == MemorySegment.NULL) return false
+        setPtrProp.invoke(playbin, uriProperty, uri, MemorySegment.NULL)
+        gFree.invoke(uri)
+        true
+    }
+
+    /** playbin's about-to-finish signal. Runs on a GStreamer thread; nothing may be thrown back into C. */
+    @Suppress("unused") // Called from native code.
+    private fun onAboutToFinish(element: MemorySegment, data: MemorySegment) {
+        try {
+            val path = nextFile?.invoke() ?: return
+            if (setUri(path)) {
+                nextPath = path
+                handedOver = true
+            }
+        } catch (t: Throwable) {
+            // The song then simply ends; the player moves on as without gapless.
+        }
+    }
 
     /** Non-blocking: returns an error message if GStreamer reported one. */
     fun pollError(): String? {
@@ -131,14 +201,22 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     }
 
     /**
-     * Takes one end-of-stream or error message off the bus, waiting up to [timeoutNs].
-     * Both types must be read with one filter: the bus discards messages that don't match it.
+     * Takes one end-of-stream, error or stream-start message off the bus, waiting up to [timeoutNs].
+     * All types must be read with one filter: the bus discards messages that don't match it.
      */
     private fun nextMessage(timeoutNs: Long): Boolean {
-        val msg = busPop.invoke(bus, timeoutNs, MSG_EOS or MSG_ERROR) as MemorySegment
+        val msg = busPop.invoke(bus, timeoutNs, MSG_EOS or MSG_ERROR or MSG_STREAM_START) as MemorySegment
         if (msg == MemorySegment.NULL) return false
         // GstMessage { GstMiniObject (64 bytes); GstMessageType type; ... }
-        if (msg.reinterpret(72).get(JAVA_INT, 64) == MSG_ERROR) {
+        val type = msg.reinterpret(72).get(JAVA_INT, 64)
+        if (type == MSG_STREAM_START) {
+            // Every load starts a stream too; only a handed-over next file counts as a track change.
+            if (handedOver) {
+                handedOver = false
+                trackChanged = true
+                currentPath = nextPath
+            }
+        } else if (type == MSG_ERROR) {
             pendingError = Arena.ofConfined().use { a ->
                 val errOut = a.allocate(ADDRESS)
                 parseError.invoke(msg, errOut, MemorySegment.NULL)
@@ -156,6 +234,7 @@ class GstPlayer(audioSink: String? = null) : AutoCloseable {
     }
 
     override fun close() {
+        signalDisconnect.invoke(playbin, aboutToFinishHandler)
         setState.invoke(playbin, STATE_NULL) as Int
         objectUnref.invoke(bus)
         objectUnref.invoke(playbin)

@@ -32,8 +32,12 @@ class AndroidPlayer(context: Context) : MusicPlayer {
     /** Queue items by media ID, for turning the controller's items back into [QueueItem]s. */
     private var known: Map<String, QueueItem> = emptyMap()
     private var error: String? = null
-    /** A seek made while the song was still loading; Media3 would drop it, so it is applied once seeking is possible. */
+    /**
+     * A seek made while the song was still loading; Media3 would drop it, so it is applied once
+     * seeking is possible, but only to the song it was meant for ([pendingSeekItem]).
+     */
     private var pendingSeekMs: Long? = null
+    private var pendingSeekItem: String? = null
     /** Songs skipped in a row because they failed; stops playback once every song has failed. */
     private var failures = 0
     private var released = false
@@ -50,7 +54,8 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             val seek = pendingSeekMs ?: return
             if (availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) {
                 pendingSeekMs = null
-                controller?.seekTo(seek)
+                val c = controller ?: return
+                if (c.currentMediaItem?.mediaId == pendingSeekItem) c.seekTo(seek)
             }
         }
 
@@ -111,7 +116,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
         }, main::post)
     }
 
-    override fun setQueue(items: List<QueueItem>, startIndex: Int, playWhenReady: Boolean) = command { c ->
+    override fun setQueue(items: List<QueueItem>, startIndex: Int, playWhenReady: Boolean, startPositionMs: Long) = command { c ->
         known = items.associateBy { it.id.toString() }
         pendingSeekMs = null
         error = null
@@ -120,7 +125,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             c.clearMediaItems()
             return@command
         }
-        c.setMediaItems(items.map { it.toMediaItem() }, startIndex.coerceIn(items.indices), 0)
+        c.setMediaItems(items.map { it.toMediaItem() }, startIndex.coerceIn(items.indices), startPositionMs.coerceAtLeast(0))
         c.prepare()
         c.playWhenReady = playWhenReady
     }
@@ -165,6 +170,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             c.seekTo(target)
         } else {
             pendingSeekMs = target
+            pendingSeekItem = c.currentMediaItem?.mediaId
             publish()
         }
     }

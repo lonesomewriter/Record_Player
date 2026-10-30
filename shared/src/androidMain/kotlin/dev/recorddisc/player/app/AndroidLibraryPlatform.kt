@@ -1,6 +1,7 @@
 package dev.recorddisc.player.app
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -20,6 +21,15 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
     private val context = context.applicationContext
 
     override val suggestedFolder: String? = null
+
+    /** After a folder change, the old folder's access grant is handed back to Android. */
+    override fun releaseFolder(folder: String) {
+        try {
+            context.contentResolver.releasePersistableUriPermission(Uri.parse(folder), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            // Already released.
+        }
+    }
 
     override fun sourceFor(folder: String): LibrarySource = SafFolderLibrarySource(context, Uri.parse(folder))
 

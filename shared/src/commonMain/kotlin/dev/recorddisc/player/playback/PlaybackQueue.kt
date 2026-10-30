@@ -59,6 +59,21 @@ class PlaybackQueue(private val random: Random = Random.Default) {
         return true
     }
 
+    /**
+     * The song that follows when the current one ends on its own (what [moveNext] with
+     * userInitiated = false would move to), or null at the end of the queue. Used for gapless playback.
+     */
+    fun peekNext(): QueueItem? {
+        if (index < 0) return null
+        val next = when {
+            repeatMode == RepeatMode.One -> index
+            index + 1 < order.size -> index + 1
+            repeatMode == RepeatMode.All -> 0
+            else -> return null
+        }
+        return items[order[next]]
+    }
+
     /** Jumps to position [position] of the play order. Returns false if there is no such position. */
     fun skipTo(position: Int): Boolean {
         if (position !in order.indices) return false

@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.recorddisc.player.library.DesktopPaths
 import dev.recorddisc.player.library.FolderLibrarySource
+import dev.recorddisc.player.library.FolderWatcher
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.tags.TagReader
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,8 @@ class DesktopLibraryPlatform : LibraryPlatform {
     override val suggestedFolder: String? = DesktopPaths.musicDir().takeIf { it.isDirectory }?.absolutePath
 
     override fun sourceFor(folder: String): LibrarySource = FolderLibrarySource(listOf(File(folder)))
+
+    override fun watch(folder: String, onChange: () -> Unit): AutoCloseable = FolderWatcher(File(folder).toPath(), onChange)
 
     override fun folderLabel(folder: String): String =
         if (home != null && (folder == home || folder.startsWith("$home/"))) "~" + folder.removePrefix(home) else folder

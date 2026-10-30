@@ -102,4 +102,19 @@ class PlaybackQueueTest {
         q.setShuffle(true)
         assertNull(q.current)
     }
+
+    @Test
+    fun peekNextShowsWhatPlaysWhenTheSongEnds() {
+        val q = PlaybackQueue()
+        assertNull(q.peekNext())
+        q.set(songs, 0)
+        assertEquals(songs[1], q.peekNext())
+        q.skipTo(songs.size - 1)
+        assertNull(q.peekNext(), "end of the queue")
+        q.repeatMode = RepeatMode.All
+        assertEquals(songs[0], q.peekNext())
+        q.repeatMode = RepeatMode.One
+        assertEquals(songs.last(), q.peekNext())
+        assertEquals(songs.last(), q.current, "peeking doesn't move")
+    }
 }

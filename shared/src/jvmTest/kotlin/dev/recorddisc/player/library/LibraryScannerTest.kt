@@ -78,7 +78,7 @@ class LibraryScannerTest {
     @Test
     fun initialScanFindsAudioAndSkipsHiddenAndUnsupportedFiles() = runTest {
         val result = scanner().scan(source)
-        assertEquals(ScanResult(added = 5, updated = 0, removed = 0, unchanged = 0, unreadable = 1), result)
+        assertEquals(ScanResult(found = 5, added = 5, updated = 0, removed = 0, unchanged = 0, unreadable = 1), result)
         val names = db.tracks().observeAll().first().map { it.fileName }.toSet()
         assertFalse("secret.mp3" in names, "hidden folder must be skipped")
         assertFalse("notes.txt" in names)
@@ -114,7 +114,7 @@ class LibraryScannerTest {
     @Test
     fun rescanWithoutChangesReadsNothing() = runTest {
         scanner().scan(source)
-        assertEquals(ScanResult(added = 0, updated = 0, removed = 0, unchanged = 5, unreadable = 0), scanner().scan(source))
+        assertEquals(ScanResult(found = 5, added = 0, updated = 0, removed = 0, unchanged = 5, unreadable = 0), scanner().scan(source))
     }
 
     @Test
@@ -140,6 +140,16 @@ class LibraryScannerTest {
         val result = scanner().scan(source)
         assertEquals(1, result.removed)
         assertEquals(4, db.tracks().count())
+    }
+
+    @Test
+    fun folderWithNoMusicLeavesTheLibraryAlone() = runTest {
+        scanner().scan(source)
+        val empty = File(music.parentFile, "empty").apply { mkdirs() }
+        val result = scanner().scan(FolderLibrarySource(listOf(empty)))
+        assertEquals(0, result.found)
+        assertEquals(0, result.removed)
+        assertEquals(5, db.tracks().count())
     }
 
     @Test

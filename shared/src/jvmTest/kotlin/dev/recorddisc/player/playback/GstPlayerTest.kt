@@ -74,4 +74,26 @@ class GstPlayerTest {
             assertNotNull(p.pollError(), "expected an error message")
         }
     }
+
+    @Test
+    fun gaplessContinuesIntoTheNextFileWithoutEndOfStream() {
+        player().use { p ->
+            val second = fixture("tone.ogg").absolutePath
+            var asked = 0
+            p.nextFile = { if (asked++ == 0) second else null }
+            p.load(fixture("tone.flac").absolutePath)
+            p.play()
+            val start = System.nanoTime()
+            // Two 2-second files back to back: the switch comes with no end of stream between them.
+            var changedAt = -1L
+            while (changedAt < 0 && System.nanoTime() - start < 5_000_000_000) {
+                assertTrue(!p.awaitEnd(50), "no end of stream before the second file")
+                if (p.takeTrackChange()) changedAt = (System.nanoTime() - start) / 1_000_000
+            }
+            assertNear(2_000, changedAt, 300, "switch to the second file")
+            assertTrue(p.awaitEnd(4_000), "the second file ends normally")
+            assertNear(4_000, (System.nanoTime() - start) / 1_000_000, 400, "both files played in full")
+            assertEquals(null, p.pollError())
+        }
+    }
 }

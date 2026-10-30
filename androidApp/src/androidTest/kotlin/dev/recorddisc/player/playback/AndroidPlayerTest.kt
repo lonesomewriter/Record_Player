@@ -137,19 +137,33 @@ class AndroidPlayerTest {
         player.setQueue(songs, startIndex = 2, playWhenReady = false)
         await(what = "loaded") { it.index == 2 }
         player.setShuffle(true)
-        // The controller shows shuffle on at once; the service's order (current song first) follows.
-        val s = await(what = "shuffled") { it.shuffle && it.index == 0 }
+        // The controller shows shuffle on at once with a provisional order, and the service's order
+        // (current song first) follows; wait until the order has stopped changing.
+        await(what = "shuffled") { it.shuffle && it.index == 0 }
+        var s = player.state.value
+        while (true) {
+            Thread.sleep(500)
+            if (player.state.value.queue == s.queue) break
+            s = player.state.value
+        }
         assertEquals(0, s.index)
         assertEquals(songs[2], s.current)
         assertEquals(songs.toSet(), s.queue.toSet())
         // Jump to the last song of the shuffled order.
         val last = s.queue.last()
         player.skipTo(3)
-        await(what = "skipped to the last shuffled song") { it.current == last && it.isPlaying }
+        await(what = "skipped to the last shuffled song, ${last.title} (order then: ${s.queue.map { it.title }})") { it.current == last && it.isPlaying }
         player.pause()
         player.setShuffle(false)
         val back = await(what = "unshuffled") { !it.shuffle }
         assertEquals(songs, back.queue)
         assertEquals(last, back.current)
+    }
+
+    @Test
+    fun queueCanStartPartWayIntoASong() {
+        player.setQueue(listOf(tone("flac"), tone("ogg")), startIndex = 1, playWhenReady = false, startPositionMs = 1_200)
+        val s = await(what = "loaded at 1.2 s") { it.index == 1 && it.positionMs in 1_100..1_300 }
+        assertEquals(false, s.isPlaying)
     }
 }
