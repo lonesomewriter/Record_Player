@@ -80,7 +80,7 @@ fun DesktopApp(
     startAccentPicker: Boolean = false,
 ) {
     val settings = model.settings.collectAsState().value
-    DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458)) {
+    DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458), light = settings?.useLightTheme() == true) {
         BoxWithConstraints(Modifier.fillMaxSize().background(disc.shell)) {
             if (settings == null) return@BoxWithConstraints
             val narrow = maxWidth < 900.dp
@@ -138,10 +138,11 @@ fun DesktopApp(
 @Composable
 private fun Sidebar(model: AppModel, view: DesktopView, width: androidx.compose.ui.unit.Dp, onSelect: (DesktopView) -> Unit) {
     val count = model.tracks.collectAsState().value.size
+    val divider = disc.line
     Column(
         Modifier.width(width).fillMaxHeight()
-            .background(Brush.verticalGradient(listOf(Color(0xFF15110E), Color(0xFF100D0B))))
-            .drawBehind { drawLine(Color(0x1AF3EBE0), androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width, size.height)) }
+            .background(Brush.verticalGradient(listOf(disc.sideTop, disc.sideBottom)))
+            .drawBehind { drawLine(divider, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(size.width, size.height)) }
             .padding(start = 14.dp, end = 14.dp, top = 22.dp, bottom = 16.dp),
     ) {
         BrandRow(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 26.dp))
@@ -185,7 +186,7 @@ private fun NavItem(v: DesktopView, selected: Boolean, compact: Boolean = false,
 @Composable
 private fun TopNav(view: DesktopView, onSelect: (DesktopView) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().background(Color(0xFF15110E)).padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().background(disc.sideTop).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         BrandRow(showSub = false)
@@ -388,7 +389,7 @@ private fun SoonButton(icon: ImageVector, label: String, onClick: () -> Unit) {
 
 @Composable
 private fun Pill(text: String) = Text(
-    text, Modifier.clip(RoundedCornerShape(50)).border(1.dp, disc.line, RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.025f))
+    text, Modifier.clip(RoundedCornerShape(50)).border(1.dp, disc.line, RoundedCornerShape(50)).background(disc.tint.copy(alpha = 0.025f))
         .padding(horizontal = 10.dp, vertical = 6.dp),
     color = disc.muted, fontSize = 11.sp,
 )
@@ -396,7 +397,7 @@ private fun Pill(text: String) = Text(
 @Composable
 private fun Chip(text: String, accent: Boolean = false) = Text(
     text.uppercase(),
-    Modifier.clip(RoundedCornerShape(50)).background(if (accent) disc.soft else Color.White.copy(alpha = 0.025f))
+    Modifier.clip(RoundedCornerShape(50)).background(if (accent) disc.soft else disc.tint.copy(alpha = 0.025f))
         .border(1.dp, if (accent) disc.accent.copy(alpha = 0.28f) else disc.line, RoundedCornerShape(50)).padding(horizontal = 9.dp, vertical = 5.dp),
     color = if (accent) disc.accentReadable else disc.muted, fontSize = 10.sp, letterSpacing = 0.06.em,
 )
@@ -404,10 +405,11 @@ private fun Chip(text: String, accent: Boolean = false) = Text(
 @Composable
 private fun QueuePanel(model: AppModel, state: PlaybackState) {
     val track = rememberTrackIndex(model)[state.current?.id]
+    val divider = disc.line
     Column(
         Modifier.width(332.dp).fillMaxHeight()
-            .background(Brush.verticalGradient(listOf(Color(0x801D1712), Color(0xE0110E0B))))
-            .drawBehind { drawLine(Color(0x1AF3EBE0), androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(0f, size.height)) },
+            .background(Brush.verticalGradient(listOf(disc.queueTop, disc.queueBottom)))
+            .drawBehind { drawLine(divider, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(0f, size.height)) },
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Up next", Modifier.weight(1f), color = disc.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -439,7 +441,7 @@ private fun QueuePanel(model: AppModel, state: PlaybackState) {
         }
         Column(
             Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                .border(1.dp, disc.line, RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = 0.02f)).padding(horizontal = 16.dp, vertical = 14.dp),
+                .border(1.dp, disc.line, RoundedCornerShape(16.dp)).background(disc.tint.copy(alpha = 0.02f)).padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Text("TRACK DETAILS", Modifier.padding(bottom = 3.dp), color = disc.muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.16.em)
@@ -461,10 +463,11 @@ private fun DetailRow(label: String, value: String?) {
 
 @Composable
 private fun Dock(model: AppModel, state: PlaybackState, narrow: Boolean, queueOpen: Boolean, onToggleQueue: (() -> Unit)?, onOpenHome: () -> Unit) {
+    val divider = disc.line
     val current = state.current
     Row(
-        Modifier.fillMaxWidth().height(86.dp).background(Color(0xF517130F))
-            .drawBehind { drawLine(Color(0x1AF3EBE0), androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, 0f)) }
+        Modifier.fillMaxWidth().height(86.dp).background(disc.dock)
+            .drawBehind { drawLine(divider, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, 0f)) }
             .padding(horizontal = if (narrow) 14.dp else 22.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (narrow) 10.dp else 20.dp),
     ) {

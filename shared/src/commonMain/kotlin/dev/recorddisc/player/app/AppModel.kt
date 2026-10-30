@@ -277,6 +277,8 @@ class AppModel(
         if (list.isNotEmpty()) player.setQueue(list.map { it.toQueueItem() }, index, play)
     }
 
+    fun setTheme(mode: ThemeMode) = put(AppSettings.THEME, mode.name)
+
     fun setAccent(preset: AccentPreset) = put(AppSettings.ACCENT, preset.name)
 
     fun setCustomAccent(argb: Long) = scope.launch {

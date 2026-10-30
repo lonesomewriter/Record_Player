@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -275,7 +276,8 @@ fun PhoneTopRow() {
 @Composable
 fun BrandRow(modifier: Modifier = Modifier, showSub: Boolean = true, markSize: Dp = 34.dp) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(markSize).clip(RoundedCornerShape(50)).background(disc.bg).border(1.dp, disc.line, RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+        // A small record: black vinyl in both themes.
+        Box(Modifier.size(markSize).clip(RoundedCornerShape(50)).background(Color(0xFF0D0B09)).border(1.dp, disc.line, RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
             Box(Modifier.size(markSize - 22.dp).clip(RoundedCornerShape(50)).background(disc.accent))
         }
         Column {

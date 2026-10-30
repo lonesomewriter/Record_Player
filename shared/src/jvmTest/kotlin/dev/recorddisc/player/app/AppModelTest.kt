@@ -260,8 +260,18 @@ class AppModelTest {
     }
 
     @Test
+    fun themeChoiceIsSavedAndDefaultsToDark() {
+        val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
+        assertEquals(ThemeMode.Dark, model.settings.await("settings") { it != null }!!.theme)
+        model.setTheme(ThemeMode.Light)
+        model.settings.await("light") { it?.theme == ThemeMode.Light }
+        model.setTheme(ThemeMode.System)
+        model.settings.await("system") { it?.theme == ThemeMode.System }
+    }
+
+    @Test
     fun malformedSettingsFallBackToDefaults() {
-        val s = AppSettings.from(mapOf("accent" to "Plaid", "customAccent" to "zz", "setupDone" to "yes", "musicFolder" to " "))
+        val s = AppSettings.from(mapOf("accent" to "Plaid", "customAccent" to "zz", "setupDone" to "yes", "musicFolder" to " ", "theme" to "Sepia"))
         assertEquals(AppSettings(), s)
         assertEquals(0xFFABCDEF, AppSettings.from(mapOf("accent" to "Custom", "customAccent" to "abcdef")).accentArgb)
     }

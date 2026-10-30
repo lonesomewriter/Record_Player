@@ -60,16 +60,15 @@ import androidx.compose.ui.unit.sp
 import dev.recorddisc.player.app.AccentPreset
 import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.app.AppSettings
+import dev.recorddisc.player.app.ThemeMode
 import dev.recorddisc.player.app.ScanState
 import kotlin.math.max
 import kotlin.math.min
 
-private const val SOON = "Coming in a later update"
-
 /** On/off switch drawn like the mockups: accent track with a dark knob when on. */
 @Composable
 fun SettingSwitch(checked: Boolean, label: String, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
-    val track = if (checked) disc.accent else Color.White.copy(alpha = 0.08f)
+    val track = if (checked) disc.accent else disc.tint.copy(alpha = 0.08f)
     Box(
         Modifier.size(44.dp, 24.dp).alpha(if (enabled) 1f else 0.4f).clip(RoundedCornerShape(50)).background(track)
             .then(if (checked) Modifier else Modifier.border(1.dp, disc.line, RoundedCornerShape(50)))
@@ -88,7 +87,7 @@ fun SmallButton(text: String, enabled: Boolean = true, textSize: Int = 13, onCli
     val shape = RoundedCornerShape(10.dp)
     Text(
         text,
-        Modifier.alpha(if (enabled) 1f else 0.6f).clip(shape).background(Color.White.copy(alpha = 0.03f)).border(1.dp, disc.line, shape)
+        Modifier.alpha(if (enabled) 1f else 0.6f).clip(shape).background(disc.tint.copy(alpha = 0.03f)).border(1.dp, disc.line, shape)
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 7.dp),
         color = disc.text, fontSize = textSize.sp,
     )
@@ -116,23 +115,27 @@ fun SettingRow(label: String, sub: String? = null, divider: Boolean = true, text
 fun SettingsSectionLabel(text: String, modifier: Modifier = Modifier) =
     Text(text.uppercase(), modifier, color = disc.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.2.em)
 
-/** Theme: only Dark exists so far; System and Light follow once the light theme is designed. */
+/** Theme: System, Dark or Light; the current one is shown and ticked. */
 @Composable
 fun ThemeChooser(model: AppModel, textSize: Int = 13) {
+    val current = model.settings.collectAsState().value?.theme ?: ThemeMode.Dark
     var open by remember { mutableStateOf(false) }
     Box {
         Row(
-            Modifier.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.03f)).border(1.dp, disc.line, RoundedCornerShape(10.dp))
+            Modifier.clip(RoundedCornerShape(10.dp)).background(disc.tint.copy(alpha = 0.03f)).border(1.dp, disc.line, RoundedCornerShape(10.dp))
                 .clickable(onClickLabel = "Choose theme") { open = true }.padding(horizontal = 12.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Dark", color = disc.text, fontSize = textSize.sp)
+            Text(current.name, color = disc.text, fontSize = textSize.sp)
             Text("▾", color = disc.muted, fontSize = textSize.sp)
         }
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(text = { Text("Dark", color = disc.text) }, trailingIcon = { Icon(DiscIcons.Check, null, Modifier.size(16.dp), tint = disc.accentReadable) }, onClick = { open = false })
-            for (name in listOf("System", "Light")) {
-                DropdownMenuItem(text = { Text(name, color = disc.muted) }, trailingIcon = { SoonTag() }, onClick = { open = false; model.message(SOON) })
+            for (mode in ThemeMode.entries) {
+                DropdownMenuItem(
+                    text = { Text(mode.name, color = disc.text) },
+                    trailingIcon = { if (mode == current) Icon(DiscIcons.Check, null, Modifier.size(16.dp), tint = disc.accentReadable) },
+                    onClick = { open = false; model.setTheme(mode) },
+                )
             }
         }
     }
@@ -221,7 +224,7 @@ fun BoxScope.AccentPicker(start: Long, eyebrow: String? = null, onCancel: () -> 
     val color = Color.hsv(hue, sat, value)
     val shape = RoundedCornerShape(22.dp)
     Box(
-        Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.6f))
+        Modifier.matchParentSize().background(disc.scrim)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onCancel),
         contentAlignment = Alignment.Center,
     ) {
@@ -333,7 +336,7 @@ fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Uni
 @Composable
 private fun SettingsCard(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(16.dp)
-    Column(modifier.clip(shape).background(Color.White.copy(alpha = 0.02f)).border(1.dp, disc.line, shape).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)) {
+    Column(modifier.clip(shape).background(disc.tint.copy(alpha = 0.02f)).border(1.dp, disc.line, shape).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)) {
         SettingsSectionLabel(title, Modifier.padding(bottom = 4.dp))
         content()
     }

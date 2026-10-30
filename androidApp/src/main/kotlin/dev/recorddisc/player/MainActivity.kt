@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // The app is always dark, so keep the system bar icons light.
+        // Start with light bar icons (the default dark theme); PhoneApp switches them to match Settings → Theme.
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         // On a rotation the screen is restored instead; don't reopen Now Playing over it.

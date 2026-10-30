@@ -144,7 +144,7 @@ fun ThinSlider(value: Float, onCommit: (Float) -> Unit, label: String, modifier:
 fun ArtThumb(artwork: ArtworkCache, location: String?, size: Dp, corner: Dp, modifier: Modifier = Modifier, maxSizePx: Int = 160, round: Boolean = false) {
     val art by artwork.rememberArtwork(location, maxSizePx)
     val shape = if (round) CircleShape else RoundedCornerShape(corner)
-    val base = Modifier.size(size).clip(shape).border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+    val base = Modifier.size(size).clip(shape).border(1.dp, disc.tint.copy(alpha = 0.08f), shape)
     val image = art
     if (image != null) {
         Image(androidx.compose.ui.graphics.painter.BitmapPainter(image), null, modifier.then(base), contentScale = ContentScale.Crop)

@@ -1,10 +1,17 @@
 package dev.recorddisc.player.ui
 
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -23,4 +30,20 @@ actual fun dynamicAccentColor(): Color? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
     val context = LocalContext.current
     return remember(context) { dynamicDarkColorScheme(context).primary }
+}
+
+@Composable
+actual fun systemPrefersDark(): Boolean = isSystemInDarkTheme()
+
+@Composable
+actual fun SystemBarsEffect(light: Boolean) {
+    val activity = LocalActivity.current as? ComponentActivity ?: return
+    LaunchedEffect(activity, light) {
+        val style = if (light) {
+            SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+        } else {
+            SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+        }
+        activity.enableEdgeToEdge(style, style)
+    }
 }

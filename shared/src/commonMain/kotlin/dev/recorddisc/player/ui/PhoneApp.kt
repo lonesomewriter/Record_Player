@@ -72,7 +72,9 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<Pho
     val settings = model.settings.collectAsState().value
     val dynamic = dynamicAccentColor()
     val accent = if (settings?.dynamicColor == true && dynamic != null) dynamic else Color(settings?.accentArgb ?: 0xFFE0A458)
-    DiscTheme(accent) {
+    val light = settings?.useLightTheme() == true
+    SystemBarsEffect(light)
+    DiscTheme(accent, light) {
         Box(Modifier.fillMaxSize().background(disc.panel).safeDrawingPadding()) {
             if (settings == null) return@Box
             val state by model.player.state.collectAsState()
@@ -228,16 +230,6 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
                 active = state.repeatMode != RepeatMode.Off, badge = if (state.repeatMode == RepeatMode.One) "1" else null,
             )
         }
-        Spacer(Modifier.height(20.dp))
-        Row(
-            Modifier.align(Alignment.CenterHorizontally).alpha(0.45f).clip(RoundedCornerShape(50)).background(disc.soft)
-                .border(1.dp, disc.accent.copy(alpha = 0.35f), RoundedCornerShape(50)).clickable { model.message(SOON) }
-                .padding(horizontal = 18.dp, vertical = 11.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("✎ Edit metadata", color = disc.accentReadable, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            SoonTag()
-        }
         Spacer(Modifier.weight(1f))
         Text(
             "SWIPE LEFT TO CLOSE", Modifier.fillMaxWidth(), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.14.em,
@@ -292,7 +284,7 @@ private fun MiniPlayer(model: AppModel, state: PlaybackState, modifier: Modifier
 @Composable
 fun CircleIconButton(glyph: String, label: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.03f)).border(1.dp, disc.line, CircleShape)
+        Modifier.size(40.dp).clip(CircleShape).background(disc.tint.copy(alpha = 0.03f)).border(1.dp, disc.line, CircleShape)
             .clickable(onClickLabel = label, onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {

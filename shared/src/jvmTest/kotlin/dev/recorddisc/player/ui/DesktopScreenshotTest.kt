@@ -13,6 +13,8 @@ import androidx.compose.ui.unit.Density
 import androidx.room.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import dev.recorddisc.player.app.AppModel
+import dev.recorddisc.player.app.AccentPreset
+import dev.recorddisc.player.app.ThemeMode
 import dev.recorddisc.player.app.FakePlayer
 import dev.recorddisc.player.app.LibraryPlatform
 import dev.recorddisc.player.app.ScanState
@@ -159,6 +161,21 @@ class DesktopScreenshotTest {
         model.settings.await { it?.accent == null }
         shoot(model, "17-accent-picker", view = DesktopView.Settings, picker = true)
         shoot(model, "18-settings-custom-accent", view = DesktopView.Settings)
+        // Light theme (Settings → Theme → Light).
+        model.setTheme(ThemeMode.Light)
+        model.settings.await { it?.theme == ThemeMode.Light }
+        shoot(model, "26-light-accent-picker", view = DesktopView.Settings, picker = true)
+        model.setAccent(AccentPreset.Gold)
+        model.settings.await { it?.accent == AccentPreset.Gold }
+        shoot(model, "19-light-home")
+        shoot(model, "20-light-home-narrow", width = 860, height = 1000)
+        shoot(model, "21-light-library", view = DesktopView.Library)
+        shoot(model, "22-light-albums", view = DesktopView.Library, library = LibraryNav(LibraryTab.Albums))
+        shoot(model, "23-light-settings", view = DesktopView.Settings)
+        shoot(model, "24-light-settings-narrow", width = 860, height = 1000, view = DesktopView.Settings)
+        model.setAccent(AccentPreset.Mint)
+        model.settings.await { it?.accent == AccentPreset.Mint }
+        shoot(model, "25-light-home-mint")
     }
 
     @Test

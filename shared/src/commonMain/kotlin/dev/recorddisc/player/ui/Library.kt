@@ -185,7 +185,7 @@ fun Artist.counts(): String =
 fun PageButton(icon: ImageVector, label: String, filled: Boolean = false, pill: Boolean = true, textSize: Int = 13, onClick: () -> Unit) {
     val shape = RoundedCornerShape(if (pill) 50 else 12)
     Row(
-        Modifier.clip(shape).background(if (filled) disc.accent else Color.White.copy(alpha = 0.03f))
+        Modifier.clip(shape).background(if (filled) disc.accent else disc.tint.copy(alpha = 0.03f))
             .then(if (filled) Modifier else Modifier.border(1.dp, disc.line, shape))
             .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -459,7 +459,7 @@ private fun <T> LazyListScope.cardRows(prefix: String, entries: List<T>, grid: C
 private fun DesktopCard(width: Dp, label: String, onOpen: () -> Unit, centered: Boolean, content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Column(
-        Modifier.width(width).clip(shape).background(Color.White.copy(alpha = 0.02f)).border(1.dp, disc.line, shape)
+        Modifier.width(width).clip(shape).background(disc.tint.copy(alpha = 0.02f)).border(1.dp, disc.line, shape)
             .clickable(onClickLabel = label, onClick = onOpen).padding(10.dp),
         horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
     ) { content() }

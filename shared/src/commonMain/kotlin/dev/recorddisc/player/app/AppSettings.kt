@@ -10,6 +10,9 @@ enum class AccentPreset(val argb: Long) {
     Rose(0xFFE79AB5),
 }
 
+/** Settings → Theme. System follows the phone or desktop setting. */
+enum class ThemeMode { System, Dark, Light }
+
 /** Typed view of the settings table. Unknown or malformed values fall back to the defaults. */
 data class AppSettings(
     /** Desktop: a folder path. Android: the folder grant's tree URI. Null until chosen. */
@@ -19,6 +22,7 @@ data class AppSettings(
     /** A preset, or null for [customAccent]. */
     val accent: AccentPreset? = AccentPreset.Gold,
     val customAccent: Long = AccentPreset.Gold.argb,
+    val theme: ThemeMode = ThemeMode.Dark,
     /** Android 12+: take the accent from the wallpaper. */
     val dynamicColor: Boolean = true,
     /** Reopen the last queue at the same song and position (paused) when the app starts. */
@@ -34,6 +38,7 @@ data class AppSettings(
     companion object {
         const val MUSIC_FOLDER = "musicFolder"
         const val SETUP_DONE = "setupDone"
+        const val THEME = "theme"
         const val ACCENT = "accent"
         const val CUSTOM_ACCENT = "customAccent"
         const val DYNAMIC_COLOR = "dynamicColor"
@@ -50,6 +55,7 @@ data class AppSettings(
             return AppSettings(
                 musicFolder = values[MUSIC_FOLDER]?.takeIf { it.isNotBlank() },
                 setupDone = flag(SETUP_DONE, d.setupDone),
+                theme = ThemeMode.entries.firstOrNull { it.name == values[THEME] } ?: d.theme,
                 accent = when (accentName) {
                     null -> d.accent
                     CUSTOM -> null
