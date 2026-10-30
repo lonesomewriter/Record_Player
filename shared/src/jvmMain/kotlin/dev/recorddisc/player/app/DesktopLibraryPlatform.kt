@@ -3,11 +3,13 @@ package dev.recorddisc.player.app
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.recorddisc.player.library.DesktopPaths
+import dev.recorddisc.player.library.DesktopLyricsSaver
 import dev.recorddisc.player.library.DesktopTagSaver
 import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FolderLibrarySource
 import dev.recorddisc.player.library.FolderWatcher
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.Lyrics
 import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TrackEntity
@@ -37,6 +39,12 @@ class DesktopLibraryPlatform : LibraryPlatform {
     override suspend fun saveTags(track: TrackEntity, edit: TagEdit): SavedFile = withContext(Dispatchers.IO) {
         DesktopTagSaver.save(File(track.location), edit)
     }
+
+    override suspend fun readLyrics(track: TrackEntity): Lyrics? = withContext(Dispatchers.IO) { DesktopLyricsSaver.read(track) }
+
+    override suspend fun lyricsSupport(track: TrackEntity): EditSupport = withContext(Dispatchers.IO) { DesktopLyricsSaver.support(track) }
+
+    override suspend fun saveLyrics(track: TrackEntity, text: String?): String? = withContext(Dispatchers.IO) { DesktopLyricsSaver.save(track, text) }
 
     override fun folderLabel(folder: String): String =
         if (home != null && (folder == home || folder.startsWith("$home/"))) "~" + folder.removePrefix(home) else folder

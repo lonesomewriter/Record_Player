@@ -8,9 +8,9 @@ import androidx.room.RoomDatabaseConstructor
 
 @Database(
     entities = [TrackEntity::class, SettingEntity::class],
-    version = 2,
-    // Version 2 added the settings table.
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    version = 3,
+    // Version 2 added the settings table; version 3 each song's folder and lyrics file.
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 @ConstructedBy(LibraryDatabaseConstructor::class)
 abstract class LibraryDatabase : RoomDatabase() {

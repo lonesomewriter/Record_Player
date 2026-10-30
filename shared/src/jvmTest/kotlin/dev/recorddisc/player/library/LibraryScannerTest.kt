@@ -134,6 +134,27 @@ class LibraryScannerTest {
     }
 
     @Test
+    fun lyricsFilesAreMatchedAndFollowedWithoutRereadingTags() = runTest {
+        // Matched by name, ignoring case; the folder is recorded for every song.
+        File(music, "Neon Coast/After Hours/01 midnight drive.LRC").writeText("[00:01.00]Headlights")
+        scanner().scan(source)
+        val tracks = db.tracks().observeAll().first()
+        val drive = tracks.first { it.title == "Midnight Drive" }
+        assertEquals(File(music, "Neon Coast/After Hours/01 midnight drive.LRC").absolutePath, drive.lyricsLocation)
+        assertEquals(File(music, "Neon Coast/After Hours").absolutePath, drive.folder)
+        assertEquals(null, tracks.first { it.title == "Paper Lanterns" }.lyricsLocation)
+
+        // Adding or removing an .lrc updates the song without reading its tags again.
+        File(music, "Neon Coast/After Hours/02 Paper Lanterns.lrc").writeText("[00:01.00]Lanterns")
+        File(music, "Neon Coast/After Hours/01 midnight drive.LRC").delete()
+        val result = scanner().scan(source)
+        assertEquals(2, result.updated)
+        val after = db.tracks().observeAll().first()
+        assertEquals(null, after.first { it.title == "Midnight Drive" }.lyricsLocation)
+        assertTrue(after.first { it.title == "Paper Lanterns" }.lyricsLocation!!.endsWith("02 Paper Lanterns.lrc"))
+    }
+
+    @Test
     fun deletedFileIsRemoved() = runTest {
         scanner().scan(source)
         assertTrue(File(music, "Mira Vale/Copper Sky.opus").delete())

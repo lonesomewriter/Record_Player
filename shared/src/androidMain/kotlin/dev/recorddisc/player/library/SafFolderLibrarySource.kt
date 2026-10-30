@@ -25,7 +25,12 @@ class SafFolderLibrarySource(context: Context, private val treeUri: Uri) : Libra
             Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED,
         )
         while (pending.isNotEmpty()) {
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, pending.removeFirst())
+            val parentId = pending.removeFirst()
+            val folder = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentId).toString()
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+            val songs = ArrayList<FileEntry>()
+            // Lyrics files in this folder by base name, matched to its songs below.
+            val lyrics = HashMap<String, String>()
             context.contentResolver.query(children, columns, null, null, null)?.use { c ->
                 while (c.moveToNext()) {
                     val id = c.getString(0)
@@ -35,10 +40,13 @@ class SafFolderLibrarySource(context: Context, private val treeUri: Uri) : Libra
                         pending.addLast(id)
                     } else if (AudioFormats.isSupported(name)) {
                         val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                        found += FileEntry(uri.toString(), name, c.getLong(3), c.getLong(4))
+                        songs += FileEntry(uri.toString(), name, c.getLong(3), c.getLong(4), folder)
+                    } else if (name.endsWith(".lrc", ignoreCase = true)) {
+                        lyrics[sidecarKey(name)] = DocumentsContract.buildDocumentUriUsingTree(treeUri, id).toString()
                     }
                 }
             }
+            songs.mapTo(found) { it.copy(lyricsLocation = lyrics[sidecarKey(it.fileName)]) }
         }
         found
     }

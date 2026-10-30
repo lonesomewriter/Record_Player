@@ -7,6 +7,9 @@ import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibraryScanner
+import dev.recorddisc.player.library.LyricLine
+import dev.recorddisc.player.library.Lrc
+import dev.recorddisc.player.library.Lyrics
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.SettingEntity
@@ -66,6 +69,16 @@ interface LibraryPlatform {
     val rewritesInPlace: Boolean get() = false
     /** Finishes a save the app couldn't complete last time; returns a notice for the user, or null. */
     suspend fun recoverPendingSaves(): String? = null
+    /** [track]'s lyrics: its `.lrc` if there is one, else lyrics stored inside the song file, else null. */
+    suspend fun readLyrics(track: TrackEntity): Lyrics? = null
+    /** Whether an `.lrc` can be written next to [track]. */
+    suspend fun lyricsSupport(track: TrackEntity): EditSupport = EditSupport.ReadOnly("Editing isn't available here")
+    /**
+     * Writes [text] as [track]'s `.lrc` (creating it if needed), or deletes the `.lrc` when [text]
+     * is null. Returns the `.lrc`'s location afterwards (null once deleted). Throws
+     * [TagSaveException] with a message for the user if it can't.
+     */
+    suspend fun saveLyrics(track: TrackEntity, text: String?): String? = throw UnsupportedOperationException("Editing isn't available here")
 }
 
 sealed interface ScanState {
@@ -342,6 +355,85 @@ class AppModel(
         player.updateItem(updated.toQueueItem(), reload = release, play = release && before.isPlaying)
         message("Song details saved")
         null
+    }
+
+    private val lyricsLock = Mutex()
+    /** Lyrics already read, by song location (null = the song has none). */
+    private val lyricsCache = HashMap<String, Lyrics?>()
+    private val _lyricsRevision = MutableStateFlow(0)
+    /** Goes up when a song's lyrics change, so lyrics on screen are read again. */
+    val lyricsRevision: StateFlow<Int> = _lyricsRevision.asStateFlow()
+
+    /** [track]'s lyrics (its `.lrc`, else lyrics inside the song), or null. Read once, then kept. */
+    suspend fun lyrics(track: TrackEntity): Lyrics? {
+        val key = track.location + "|" + track.lyricsLocation
+        lyricsLock.withLock { if (key in lyricsCache) return lyricsCache[key] }
+        val lyrics = try {
+            platform.readLyrics(track)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        lyricsLock.withLock { lyricsCache[key] = lyrics }
+        return lyrics
+    }
+
+    /** Whether lyrics can be saved for [track]. */
+    suspend fun lyricsSupport(track: TrackEntity): EditSupport = try {
+        platform.lyricsSupport(track)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        EditSupport.ReadOnly("The folder can't be checked right now")
+    }
+
+    /**
+     * Saves [lines] as [track]'s `.lrc` (sorted by time; untimed lines keep their place), or
+     * removes the `.lrc` when no line has text. Returns null when saved, or a message for the editor.
+     */
+    suspend fun saveLyrics(track: TrackEntity, lines: List<LyricLine>): String? {
+        val kept = Lrc.sortForSave(lines.map { it.copy(text = it.text.trim()) }.filter { it.text.isNotEmpty() })
+        val name = track.fileName.substringBeforeLast('.') + ".lrc"
+        // Header tags of an existing .lrc are kept; lyrics from inside the song have none to keep.
+        val tags = lyrics(track)?.takeIf { !it.embedded }?.tags.orEmpty()
+        val newLocation = try {
+            platform.saveLyrics(track, if (kept.isEmpty()) null else Lrc.format(Lyrics(kept, tags)))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return if (e is TagSaveException) "Couldn't save the lyrics: ${e.message}" else "Couldn't save the lyrics. Nothing was changed."
+        }
+        tracksDao.updateSidecar(track.location, track.folder, newLocation)
+        lyricsLock.withLock { lyricsCache.keys.removeAll { it.startsWith(track.location + "|") } }
+        _lyricsRevision.value++
+        val untimed = kept.count { it.timeMs == null }
+        message(
+            when {
+                kept.isEmpty() -> "Lyrics removed"
+                untimed > 0 -> "Saved $name · $untimed not timed"
+                else -> "Saved $name"
+            },
+        )
+        return null
+    }
+
+    fun setShowLyrics(on: Boolean) = setFlag(AppSettings.SHOW_LYRICS, on)
+
+    /**
+     * The lyrics editor's play button for a song that isn't the current one: plays [track] from
+     * the queue if it's there, otherwise within the library (like tapping it in the Library).
+     */
+    fun playForEditing(track: TrackEntity) {
+        val s = player.state.value
+        if (s.current?.id == track.id) return player.play()
+        val inQueue = s.queue.indexOfFirst { it.id == track.id }
+        if (inQueue >= 0) {
+            player.skipTo(inQueue)
+        } else {
+            val library = tracks.value
+            loadQueue(library, play = true, index = library.indexOfFirst { it.id == track.id }.coerceAtLeast(0))
+        }
     }
 
     fun setTheme(mode: ThemeMode) = put(AppSettings.THEME, mode.name)

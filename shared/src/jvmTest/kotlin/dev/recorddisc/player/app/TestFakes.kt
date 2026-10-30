@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.Lrc
+import dev.recorddisc.player.library.Lyrics
 import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TagSaveException
@@ -79,6 +81,16 @@ internal open class FakePlatform : LibraryPlatform {
     /** How many times a file's tags were read by a scan, and how many times a folder was listed. */
     @Volatile var tagReads = 0
     @Volatile var listCalls = 0
+
+    /** `.lrc` contents by song location, standing in for files next to the songs. */
+    val lrcFiles = HashMap<String, String>()
+    override suspend fun readLyrics(track: TrackEntity): Lyrics? = lrcFiles[track.location]?.let { Lrc.parse(it) }
+    override suspend fun lyricsSupport(track: TrackEntity) = support
+    override suspend fun saveLyrics(track: TrackEntity, text: String?): String? {
+        failSave?.let { throw TagSaveException(it) }
+        if (text == null) lrcFiles.remove(track.location) else lrcFiles[track.location] = text
+        return if (text == null) null else track.location.substringBeforeLast('.') + ".lrc"
+    }
 
     override suspend fun editSupport(track: TrackEntity) = support
     override val rewritesInPlace get() = inPlace

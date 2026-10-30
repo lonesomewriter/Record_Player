@@ -27,6 +27,10 @@ data class TrackEntity(
     val hasArtwork: Boolean,
     /** False when the file is listed but its tags could not be read. */
     val tagsReadable: Boolean,
+    /** The folder holding the file: a path on desktop; the folder's document URI on Android. */
+    val folder: String? = null,
+    /** The `.lrc` lyrics file next to it (same name), if there is one. */
+    val lyricsLocation: String? = null,
 )
 
 /** Title to show: the tag title, or the file name without extension. */
@@ -38,4 +42,4 @@ data class AlbumSummary(val name: String, val artist: String?, val year: Int?, v
 data class ArtistSummary(val name: String, val trackCount: Int)
 
 /** What a rescan needs to decide whether a file changed. */
-data class ScanKey(val id: Long, val location: String, val sizeBytes: Long, val modifiedMs: Long)
+data class ScanKey(val id: Long, val location: String, val sizeBytes: Long, val modifiedMs: Long, val folder: String?, val lyricsLocation: String?)

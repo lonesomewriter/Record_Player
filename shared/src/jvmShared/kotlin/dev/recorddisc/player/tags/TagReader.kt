@@ -49,6 +49,19 @@ object TagReader {
         return runCatching { tag?.firstArtwork?.binaryData }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= MAX_ARTWORK_BYTES }
     }
 
+    /**
+     * Lyrics stored inside the song file (ID3 USLT, Vorbis LYRICS, MP4 ©lyr), or null if none.
+     * [ext] gives the format when [file]'s name doesn't (Android reads through /proc/self/fd).
+     */
+    fun readLyrics(file: File, ext: String = AudioFormats.extensionOf(file.name)): String? {
+        val tag = when (ext) {
+            "opus" -> OpusTags.read(file)
+            "oga" -> AudioFileIO.readAs(file, "ogg").tag
+            else -> AudioFileIO.readAs(file, ext).tag
+        }
+        return tag.text(FieldKey.LYRICS)
+    }
+
     /** Larger embedded images are ignored rather than decoded. */
     private const val MAX_ARTWORK_BYTES = 20 * 1024 * 1024
 

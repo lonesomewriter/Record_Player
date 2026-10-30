@@ -2,8 +2,15 @@ package dev.recorddisc.player.library
 
 import kotlinx.coroutines.CancellationException
 
-/** A file found by a [LibrarySource]. */
-data class FileEntry(val location: String, val fileName: String, val sizeBytes: Long, val modifiedMs: Long)
+/** A file found by a [LibrarySource], with its folder and the `.lrc` lyrics next to it (if any). */
+data class FileEntry(
+    val location: String,
+    val fileName: String,
+    val sizeBytes: Long,
+    val modifiedMs: Long,
+    val folder: String? = null,
+    val lyricsLocation: String? = null,
+)
 
 /** Tags read from one file. Any field may be missing. */
 data class TrackTags(
@@ -24,6 +31,9 @@ interface LibrarySource {
     suspend fun listFiles(): List<FileEntry>
     suspend fun readTags(entry: FileEntry): TrackTags
 }
+
+/** Base name without extension, lower-cased: how a song and its `.lrc` are matched. */
+internal fun sidecarKey(fileName: String): String = fileName.substringBeforeLast('.').lowercase()
 
 object AudioFormats {
     val extensions = setOf("mp3", "flac", "m4a", "ogg", "oga", "opus", "wav")
@@ -60,7 +70,13 @@ class LibraryScanner(private val dao: TrackDao) {
             onProgress(seen.size, file.fileName)
             val old = known[file.location]
             if (old != null && old.sizeBytes == file.sizeBytes && old.modifiedMs == file.modifiedMs) {
-                unchanged++
+                // An .lrc added or removed next to an unchanged song: no need to read its tags again.
+                if (old.lyricsLocation != file.lyricsLocation || old.folder != file.folder) {
+                    dao.updateSidecar(file.location, file.folder, file.lyricsLocation)
+                    updated++
+                } else {
+                    unchanged++
+                }
                 continue
             }
             val tags = try {
@@ -113,6 +129,8 @@ internal fun trackEntity(id: Long, file: FileEntry, tags: TrackTags?) = TrackEnt
     durationMs = tags?.durationMs,
     hasArtwork = tags?.hasArtwork ?: false,
     tagsReadable = tags != null,
+    folder = file.folder,
+    lyricsLocation = file.lyricsLocation,
 )
 
 /** Parses tag numbers such as "3", "03" or "3/12" (track 3 of 12). */

@@ -7,6 +7,7 @@ import androidx.sqlite.execSQL
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.LyricLine
 import dev.recorddisc.player.library.SettingEntity
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TrackEntity
@@ -324,6 +325,45 @@ class AppModelTest {
         assertEquals("Couldn't save: Not enough free space to save safely", model.saveTags(song, edit))
         assertEquals("Paper Lanterns", model.tracks.value.first { it.id == song.id }.title)
         assertTrue(player.updates.isEmpty())
+    }
+
+    @Test
+    fun lyricsAreSavedSortedAndRemovedWhenEmpty() = runBlocking {
+        val platform = FakePlatform()
+        val (model, song) = libraryWithQueue(platform, FakePlayer())
+        assertNull(model.lyrics(song))
+        val lines = listOf(LyricLine(12_800, "Neon hums"), LyricLine(6_200, "Headlights"), LyricLine(null, "  "), LyricLine(null, "(spoken)"))
+        assertNull(model.saveLyrics(song, lines))
+        // Sorted by time and the blank line dropped; the untimed line stays after the line written
+        // just before it ("Headlights"), as in the editor.
+        assertEquals("[00:06.20]Headlights\n(spoken)\n[00:12.80]Neon hums\n", platform.lrcFiles[song.location])
+        val saved = model.tracks.await("lyrics location") { list -> list.any { it.id == song.id && it.lyricsLocation != null } }.first { it.id == song.id }
+        assertEquals(3, model.lyrics(saved)!!.lines.size)
+
+        assertNull(model.saveLyrics(saved, emptyList()))
+        assertNull(platform.lrcFiles[song.location])
+        model.tracks.await("lyrics removed") { list -> list.first { it.id == song.id }.lyricsLocation == null }
+
+        platform.failSave = "the music folder isn't available"
+        assertEquals("Couldn't save the lyrics: the music folder isn't available", model.saveLyrics(saved, lines))
+    }
+
+    @Test
+    fun lyricsToggleIsRemembered() {
+        val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
+        assertEquals(false, model.settings.await("settings") { it != null }!!.showLyrics)
+        model.setShowLyrics(true)
+        model.settings.await("shown") { it?.showLyrics == true }
+    }
+
+    @Test
+    fun playForEditingStartsTheSong() = runBlocking {
+        val player = FakePlayer()
+        val (model, song) = libraryWithQueue(FakePlatform(), player)
+        val other = model.tracks.value.first { it.id != song.id }
+        model.playForEditing(other)
+        assertEquals(other.id, player.state.value.current?.id)
+        assertTrue(player.state.value.isPlaying)
     }
 
     @Test

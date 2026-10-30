@@ -43,8 +43,12 @@ interface TrackDao {
     )
     fun observeArtists(): Flow<List<ArtistSummary>>
 
-    @Query("SELECT id, location, sizeBytes, modifiedMs FROM tracks")
+    @Query("SELECT id, location, sizeBytes, modifiedMs, folder, lyricsLocation FROM tracks")
     suspend fun scanIndex(): List<ScanKey>
+
+    /** A song's folder and lyrics file changed, but the song itself didn't. */
+    @Query("UPDATE tracks SET folder = :folder, lyricsLocation = :lyricsLocation WHERE location = :location")
+    suspend fun updateSidecar(location: String, folder: String?, lyricsLocation: String?)
 
     @Upsert
     suspend fun upsert(tracks: List<TrackEntity>)

@@ -32,6 +32,8 @@ data class AppSettings(
     val gapless: Boolean = true,
     /** Desktop: rescan by itself when files in the music folder change. */
     val watchFolder: Boolean = true,
+    /** The Lyrics toggle on Now Playing / Home. */
+    val showLyrics: Boolean = false,
 ) {
     val accentArgb: Long get() = accent?.argb ?: customAccent
 
@@ -46,6 +48,7 @@ data class AppSettings(
         const val PAUSE_ON_UNPLUG = "pauseOnUnplug"
         const val GAPLESS = "gapless"
         const val WATCH_FOLDER = "watchFolder"
+        const val SHOW_LYRICS = "showLyrics"
         const val CUSTOM = "Custom"
 
         fun from(values: Map<String, String>): AppSettings {
@@ -67,6 +70,7 @@ data class AppSettings(
                 pauseOnUnplug = flag(PAUSE_ON_UNPLUG, d.pauseOnUnplug),
                 gapless = flag(GAPLESS, d.gapless),
                 watchFolder = flag(WATCH_FOLDER, d.watchFolder),
+                showLyrics = flag(SHOW_LYRICS, d.showLyrics),
             )
         }
     }
