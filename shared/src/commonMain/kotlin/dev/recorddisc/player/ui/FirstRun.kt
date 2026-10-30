@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -240,9 +241,14 @@ private fun Promises(vararg lines: String) {
 }
 
 @Composable
-fun PrimaryButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun PrimaryButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) = PrimaryButton(text, modifier, enabled = true, onClick)
+
+/** [enabled] false dims the button and ignores clicks (e.g. Save while a field needs fixing). */
+@Composable
+fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean, onClick: () -> Unit) {
     Box(
-        modifier.clip(RoundedCornerShape(14.dp)).background(disc.accent).clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp),
+        modifier.alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(14.dp)).background(disc.accent)
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 20.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text, color = disc.accentInk, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -252,7 +258,7 @@ fun PrimaryButton(text: String, modifier: Modifier = Modifier, onClick: () -> Un
 @Composable
 fun OutlineButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit = {}) {
     Box(
-        modifier.clip(RoundedCornerShape(12.dp)).border(1.dp, disc.line, RoundedCornerShape(12.dp))
+        modifier.alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(12.dp)).border(1.dp, disc.line, RoundedCornerShape(12.dp))
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 15.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {

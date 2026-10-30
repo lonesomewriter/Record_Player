@@ -46,6 +46,8 @@ data class DiscColors(
     val queueBottom: Color = Color(0xE0110E0B),
     /** Dims the screen behind dialogs. */
     val scrim: Color = Color(0x99000000),
+    /** Error text and borders (e.g. a field that needs fixing). */
+    val error: Color = Color(0xFFEF8B78),
 ) {
     /** Tinted fills, like the mockups' --soft. */
     val soft: Color get() = accent.copy(alpha = 0.16f)
@@ -68,6 +70,7 @@ data class DiscColors(
             queueTop = Color(0x80FFFAF2),
             queueBottom = Color(0xE0F3ECE1),
             scrim = Color(0x5C281C12),
+            error = Color(0xFFA63D2C),
         )
 
         fun forAccent(accent: Color, light: Boolean = false): DiscColors {

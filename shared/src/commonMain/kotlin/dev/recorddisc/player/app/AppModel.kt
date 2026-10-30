@@ -3,14 +3,20 @@ package dev.recorddisc.player.app
 import androidx.compose.ui.graphics.ImageBitmap
 import dev.recorddisc.player.library.Album
 import dev.recorddisc.player.library.Artist
+import dev.recorddisc.player.library.EditSupport
+import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibraryScanner
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.SettingEntity
+import dev.recorddisc.player.library.TagEdit
+import dev.recorddisc.player.library.TagSaveException
 import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.library.groupAlbums
 import dev.recorddisc.player.library.groupArtists
 import dev.recorddisc.player.library.searchText
+import dev.recorddisc.player.library.trackEntity
 import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CancellationException
@@ -36,6 +42,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** What each platform provides to the shared app. */
 interface LibraryPlatform {
@@ -50,6 +58,14 @@ interface LibraryPlatform {
     fun watch(folder: String, onChange: () -> Unit): AutoCloseable? = null
     /** Gives up access to a folder that is no longer the music folder (Android's folder grant). */
     fun releaseFolder(folder: String) = Unit
+    /** Whether [track]'s file can be changed by the song details editor. */
+    suspend fun editSupport(track: TrackEntity): EditSupport = EditSupport.ReadOnly("Editing isn't available here")
+    /** Saves [edit] into [track]'s file. Throws with a message for the user if it can't; the file is then unchanged. */
+    suspend fun saveTags(track: TrackEntity, edit: TagEdit): SavedFile = throw UnsupportedOperationException("Editing isn't available here")
+    /** True where saving rewrites the song file in place (Android), so the player has to let go of it first. */
+    val rewritesInPlace: Boolean get() = false
+    /** Finishes a save the app couldn't complete last time; returns a notice for the user, or null. */
+    suspend fun recoverPendingSaves(): String? = null
 }
 
 sealed interface ScanState {
@@ -112,11 +128,20 @@ class AppModel(
 
     val artwork = ArtworkCache(platform)
 
+    /** Held while song details are being saved; scans wait for it. Declared before init, which can start a scan. */
+    private val saveLock = Mutex()
+
+    private val _accessRevision = MutableStateFlow(0)
+    /** Goes up when folder access changes (Android: write access granted), so the editor checks again. */
+    val accessRevision: StateFlow<Int> = _accessRevision.asStateFlow()
+
     private var quietScan: Job? = null
     private val folderChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     init {
         scope.launch {
+            // A tag save the app couldn't finish last time (Android) is completed or undone first.
+            runCatching { platform.recoverPendingSaves() }.getOrNull()?.let(::message)
             val s = settings.filterNotNull().first()
             val folder = s.musicFolder
             if (s.setupDone && folder != null) {
@@ -194,7 +219,7 @@ class AppModel(
 
     /** Quiet background rescan; the library updates when it finishes. Skipped while another scan runs. */
     private fun rescan(folder: String) {
-        if (quietScan?.isActive == true || scanJob?.isActive == true) return
+        if (quietScan?.isActive == true || scanJob?.isActive == true || saveLock.isLocked) return
         quietScan = scope.launch {
             try {
                 scanner.scan(platform.sourceFor(folder))
@@ -275,6 +300,48 @@ class AppModel(
 
     private fun loadQueue(list: List<TrackEntity>, play: Boolean, index: Int = 0) {
         if (list.isNotEmpty()) player.setQueue(list.map { it.toQueueItem() }, index, play)
+    }
+
+    fun accessChanged() {
+        _accessRevision.value++
+    }
+
+    /** Whether [track]'s file can be changed by the song details editor. */
+    suspend fun editSupport(track: TrackEntity): EditSupport = try {
+        platform.editSupport(track)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        EditSupport.ReadOnly("The file can't be checked right now")
+    }
+
+    /**
+     * Saves [edit] into [track]'s file, then updates the library, the queue and the cover art.
+     * Returns null when saved, or a message for the editor to show (the file is then unchanged).
+     * Where saving rewrites the file in place (Android) and the song is playing, it pauses for the
+     * save and then carries on from the same spot.
+     */
+    suspend fun saveTags(track: TrackEntity, edit: TagEdit): String? = saveLock.withLock {
+        // Let a running scan finish, so it can't write the old tags back afterwards.
+        scanJob?.join()
+        quietScan?.join()
+        val before = player.state.value
+        val release = platform.rewritesInPlace && before.current?.id == track.id
+        if (release) player.pause()
+        val saved: SavedFile = try {
+            platform.saveTags(track, edit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (release) player.updateItem(track.toQueueItem(), reload = true, play = before.isPlaying)
+            return@withLock if (e is TagSaveException) "Couldn't save: ${e.message}" else "Couldn't save the song details. The file wasn't changed."
+        }
+        val updated = trackEntity(track.id, FileEntry(track.location, track.fileName, saved.sizeBytes, saved.modifiedMs), saved.tags)
+        tracksDao.upsert(listOf(updated))
+        artwork.invalidate(track.location)
+        player.updateItem(updated.toQueueItem(), reload = release, play = release && before.isPlaying)
+        message("Song details saved")
+        null
     }
 
     fun setTheme(mode: ThemeMode) = put(AppSettings.THEME, mode.name)

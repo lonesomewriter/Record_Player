@@ -33,6 +33,11 @@ class PlaybackQueue(private val random: Random = Random.Default) {
         index = order.indexOf(start)
     }
 
+    /** Replaces the queued copies of [item] (same id), keeping the length already known if [item] has none. */
+    fun update(item: QueueItem) {
+        items = items.map { if (it.id == item.id) item.copy(durationMs = item.durationMs ?: it.durationMs) else it }
+    }
+
     /** Turning shuffle on keeps the current song and shuffles the rest after it; off restores the original order. */
     fun setShuffle(enabled: Boolean) {
         if (enabled == shuffle) return

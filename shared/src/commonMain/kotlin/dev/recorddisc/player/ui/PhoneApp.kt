@@ -62,13 +62,13 @@ import dev.recorddisc.player.playback.RepeatMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
-enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings }
+enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, EditTags }
 
 private const val SOON = "Coming in a later update"
 
 /** The Android layout: the disc is home; Library, Playlists and Settings sit on its arc. */
 @Composable
-fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<PhoneScreen> = emptyFlow()) {
+fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<PhoneScreen> = emptyFlow(), editor: EditorActions = EditorActions()) {
     val settings = model.settings.collectAsState().value
     val dynamic = dynamicAccentColor()
     val accent = if (settings?.dynamicColor == true && dynamic != null) dynamic else Color(settings?.accentArgb ?: 0xFFE0A458)
@@ -83,7 +83,7 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<Pho
             if (!settings.setupDone) {
                 PhoneWelcome(scan, spin, model.platform::folderLabel, onChooseFolder, model::cancelScan) { model.finishSetup() }
             } else {
-                PhoneScreens(model, state, spin, openRequests, onChooseFolder)
+                PhoneScreens(model, state, spin, openRequests, onChooseFolder, editor)
             }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
         }
@@ -91,26 +91,39 @@ fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<Pho
 }
 
 @Composable
-private fun BoxScope.PhoneScreens(model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>, onChooseFolder: () -> Unit) {
+private fun BoxScope.PhoneScreens(
+    model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>, onChooseFolder: () -> Unit, editor: EditorActions,
+) {
     var screen by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
     var picking by rememberSaveable { mutableStateOf(false) }
+    // The song being edited, and the screen the editor goes back to.
+    var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var editReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    val closeEditor = { screen = editReturn }
     // e.g. the playback notification was tapped: show Now Playing.
     LaunchedEffect(openRequests) { openRequests.collect { screen = it } }
-    PlatformBackHandler(enabled = screen != PhoneScreen.Home) { screen = PhoneScreen.Home }
+    PlatformBackHandler(enabled = screen != PhoneScreen.Home) { if (screen == PhoneScreen.EditTags) closeEditor() else screen = PhoneScreen.Home }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
-    AnimatedContent(
-        screen,
-        transitionSpec = { (fadeIn() + slideInHorizontally { it / 12 }) togetherWith fadeOut() },
-        modifier = Modifier.fillMaxSize()
-            // Swipe left on any screen to go back to the disc.
-            .swipeLeft { if (screen != PhoneScreen.Home) screen = PhoneScreen.Home },
-    ) { shown ->
-        when (shown) {
-            PhoneScreen.Home -> PhoneHome(spin, art) { screen = it }
-            PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = PhoneScreen.Home })
-            PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { screen = PhoneScreen.NowPlaying })
-            PhoneScreen.Playlists -> Placeholder("Playlists", "Playlists are coming in a later update.", soon = true) { screen = PhoneScreen.Home }
-            PhoneScreen.Settings -> PhoneSettings(model, onBack = { screen = PhoneScreen.Home }, onChooseFolder, onCustomAccent = { picking = true })
+    val tracks = rememberTrackIndex(model)
+    ProvideEditSong({ t -> editingId = t.id; editReturn = screen; screen = PhoneScreen.EditTags }) {
+        AnimatedContent(
+            screen,
+            transitionSpec = { (fadeIn() + slideInHorizontally { it / 12 }) togetherWith fadeOut() },
+            modifier = Modifier.fillMaxSize()
+                // Swipe left to go back to the disc (not from the editor, where it would lose typed changes).
+                .swipeLeft { if (screen != PhoneScreen.Home && screen != PhoneScreen.EditTags) screen = PhoneScreen.Home },
+        ) { shown ->
+            when (shown) {
+                PhoneScreen.Home -> PhoneHome(spin, art) { screen = it }
+                PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = PhoneScreen.Home })
+                PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { screen = PhoneScreen.NowPlaying })
+                PhoneScreen.Playlists -> Placeholder("Playlists", "Playlists are coming in a later update.", soon = true) { screen = PhoneScreen.Home }
+                PhoneScreen.Settings -> PhoneSettings(model, onBack = { screen = PhoneScreen.Home }, onChooseFolder, onCustomAccent = { picking = true })
+                PhoneScreen.EditTags -> {
+                    val track = tracks[editingId]
+                    if (track == null) LaunchedEffect(Unit) { closeEditor() } else PhoneTagEditor(model, track, editor, onClose = closeEditor)
+                }
+            }
         }
     }
     if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings) && state.current != null) {
@@ -202,11 +215,16 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
                 Box {
                     CircleIconButton("⋮", "More options") { menu = true }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                        val editSong = LocalEditSong.current
                         for (item in listOf("Edit lyrics", "Edit metadata", "Add to playlist")) {
+                            val ready = item == "Edit metadata" && track != null
                             DropdownMenuItem(
-                                text = { Text(item, color = disc.muted) },
-                                trailingIcon = { SoonTag() },
-                                onClick = { menu = false; model.message(SOON) },
+                                text = { Text(item, color = if (ready) disc.text else disc.muted) },
+                                trailingIcon = { if (!ready) SoonTag() },
+                                onClick = {
+                                    menu = false
+                                    if (ready) editSong(track!!) else model.message(SOON)
+                                },
                             )
                         }
                     }

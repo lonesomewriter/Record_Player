@@ -7,9 +7,11 @@ import androidx.compose.ui.window.rememberWindowState
 import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.app.DesktopLibraryPlatform
 import dev.recorddisc.player.library.DesktopPaths
+import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.playback.DesktopPlayer
 import dev.recorddisc.player.playback.OutputMonitor
 import dev.recorddisc.player.ui.DesktopApp
+import dev.recorddisc.player.ui.EditorActions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 import java.awt.Dimension
 import javax.swing.JFileChooser
 import javax.swing.UIManager
+import javax.swing.filechooser.FileNameExtensionFilter
 
 fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -47,9 +50,27 @@ fun main() {
             window.minimumSize = Dimension(720, 600)
             // Set by the installed package (jpackage); absent when run from Gradle.
             val version = System.getProperty("jpackage.app-version") ?: "dev"
-            DesktopApp(model, chooseFolder = { chooseFolder(window, platform.suggestedFolder) }, appVersion = version)
+            val editor = EditorActions(chooseCover = { done ->
+                val file = chooseImage(window)
+                when {
+                    file == null -> done(null)
+                    file.length() > TagRules.MAX_COVER_BYTES -> { model.message("That image is too large (the limit is 10 MB)"); done(null) }
+                    else -> done(runCatching { file.readBytes() }.getOrNull())
+                }
+            })
+            DesktopApp(model, chooseFolder = { chooseFolder(window, platform.suggestedFolder) }, appVersion = version, editor = editor)
         }
     }
+}
+
+/** The cover image dialog: JPEG and PNG files. */
+private fun chooseImage(parent: java.awt.Component): java.io.File? {
+    runCatching { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()) }
+    val chooser = JFileChooser(System.getProperty("user.home")).apply {
+        dialogTitle = "Choose a cover image"
+        fileFilter = FileNameExtensionFilter("Images (JPEG, PNG)", "jpg", "jpeg", "png")
+    }
+    return if (chooser.showOpenDialog(parent) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
 }
 
 /** The folder dialog, in the desktop's own look where Java supports it (GTK). */

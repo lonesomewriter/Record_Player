@@ -59,6 +59,12 @@ interface MusicPlayer {
     fun setShuffle(enabled: Boolean)
     /** [volume] from 0 (silent) to 1 (full). */
     fun setVolume(volume: Float)
+    /**
+     * A song's details changed: shows [item]'s title, artist and album wherever it is queued.
+     * With [reload], the current song's file was rewritten in place, so it is opened again at the
+     * same position, playing if [play].
+     */
+    fun updateItem(item: QueueItem, reload: Boolean = false, play: Boolean = false)
     fun release()
 
     companion object {

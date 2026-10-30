@@ -145,8 +145,9 @@ private fun Gone(what: String) =
 
 /** ⋮ on a song: the per-song actions of later parts. */
 @Composable
-fun SongMenuButton(model: AppModel, size: Dp = 28.dp) {
+fun SongMenuButton(model: AppModel, track: TrackEntity, size: Dp = 28.dp) {
     var open by remember { mutableStateOf(false) }
+    val editSong = LocalEditSong.current
     Box {
         Text(
             "⋮", Modifier.width(size).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "More options") { open = true }.padding(vertical = 4.dp),
@@ -154,7 +155,15 @@ fun SongMenuButton(model: AppModel, size: Dp = 28.dp) {
         )
         DropdownMenu(open, onDismissRequest = { open = false }) {
             for (item in listOf("Add to playlist", "Edit metadata", "Edit lyrics")) {
-                DropdownMenuItem(text = { Text(item, color = disc.muted) }, trailingIcon = { SoonTag() }, onClick = { open = false; model.message(SOON) })
+                val ready = item == "Edit metadata"
+                DropdownMenuItem(
+                    text = { Text(item, color = if (ready) disc.text else disc.muted) },
+                    trailingIcon = { if (!ready) SoonTag() },
+                    onClick = {
+                        open = false
+                        if (ready) editSong(track) else model.message(SOON)
+                    },
+                )
             }
         }
     }
@@ -299,7 +308,7 @@ private fun PhoneSongRow(model: AppModel, t: TrackEntity, subtitle: String?, num
             if (subtitle != null) Text(subtitle, Modifier.padding(top = 2.dp), color = disc.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(formatTime(t.durationMs), color = disc.muted, fontSize = 11.sp)
-        SongMenuButton(model)
+        SongMenuButton(model, t)
     }
 }
 
@@ -441,7 +450,7 @@ fun LazyListScope.desktopSongTable(model: AppModel, songs: List<TrackEntity>, cu
             }
             if (showAlbum) Text(t.album ?: "—", Modifier.weight(0.9f), color = disc.muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(formatTime(t.durationMs), Modifier.width(46.dp), color = disc.muted, fontSize = 10.sp)
-            SongMenuButton(model, 26.dp)
+            SongMenuButton(model, t, 26.dp)
         }
     }
 }

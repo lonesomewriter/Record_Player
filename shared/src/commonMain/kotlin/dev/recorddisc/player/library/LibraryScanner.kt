@@ -87,30 +87,33 @@ class LibraryScanner(private val dao: TrackDao) {
         return ScanResult(seen.size, added, updated, gone.size, unchanged, unreadable)
     }
 
-    private fun toEntity(id: Long, file: FileEntry, tags: TrackTags?) = TrackEntity(
-        id = id,
-        location = file.location,
-        fileName = file.fileName,
-        format = AudioFormats.extensionOf(file.fileName),
-        sizeBytes = file.sizeBytes,
-        modifiedMs = file.modifiedMs,
-        title = tags?.title,
-        artist = tags?.artist,
-        album = tags?.album,
-        albumArtist = tags?.albumArtist,
-        year = tags?.year,
-        trackNumber = tags?.trackNumber,
-        discNumber = tags?.discNumber,
-        genre = tags?.genre,
-        durationMs = tags?.durationMs,
-        hasArtwork = tags?.hasArtwork ?: false,
-        tagsReadable = tags != null,
-    )
+    private fun toEntity(id: Long, file: FileEntry, tags: TrackTags?) = trackEntity(id, file, tags)
 
     private companion object {
         const val BATCH = 200
     }
 }
+
+/** The library row for [file] with [tags] (null when they couldn't be read). */
+internal fun trackEntity(id: Long, file: FileEntry, tags: TrackTags?) = TrackEntity(
+    id = id,
+    location = file.location,
+    fileName = file.fileName,
+    format = AudioFormats.extensionOf(file.fileName),
+    sizeBytes = file.sizeBytes,
+    modifiedMs = file.modifiedMs,
+    title = tags?.title,
+    artist = tags?.artist,
+    album = tags?.album,
+    albumArtist = tags?.albumArtist,
+    year = tags?.year,
+    trackNumber = tags?.trackNumber,
+    discNumber = tags?.discNumber,
+    genre = tags?.genre,
+    durationMs = tags?.durationMs,
+    hasArtwork = tags?.hasArtwork ?: false,
+    tagsReadable = tags != null,
+)
 
 /** Parses tag numbers such as "3", "03" or "3/12" (track 3 of 12). */
 internal fun parseLeadingNumber(value: String?): Int? =

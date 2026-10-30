@@ -69,6 +69,8 @@ private const val SOON = "Coming in a later update"
  * [chooseFolder] opens the system folder dialog and returns the chosen path, or null.
  * [startView], [startLibrary] and [startAccentPicker] open a given view, Library page or the
  * custom accent dialog (used by the screenshot test). [appVersion] is shown in Settings → About.
+ * [editor] opens the cover image picker; [startEditor] opens the song details editor on the
+ * current song (screenshot test).
  */
 @Composable
 fun DesktopApp(
@@ -78,6 +80,8 @@ fun DesktopApp(
     startLibrary: LibraryNav? = null,
     appVersion: String = "dev",
     startAccentPicker: Boolean = false,
+    editor: EditorActions = EditorActions(),
+    startEditor: Boolean = false,
 ) {
     val settings = model.settings.collectAsState().value
     DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458), light = settings?.useLightTheme() == true) {
@@ -89,6 +93,8 @@ fun DesktopApp(
             val scan by model.scan.collectAsState()
             val spin = rememberDiscSpin(state.isPlaying || scan is ScanState.Running, periodMs = 18_000f)
             var picking by remember { mutableStateOf(startAccentPicker) }
+            var editingId by remember { mutableStateOf(if (startEditor) state.current?.id else null) }
+            val tracks = rememberTrackIndex(model)
             if (!settings.setupDone) {
                 var folder by remember { mutableStateOf(model.platform.suggestedFolder) }
                 DesktopWelcome(
@@ -99,7 +105,7 @@ fun DesktopApp(
                     onStart = { model.finishSetup() },
                     narrow = narrow,
                 )
-            } else {
+            } else ProvideEditSong({ editingId = it.id }) {
                 var view by remember { mutableStateOf(startView) }
                 var queueOpen by remember { mutableStateOf(true) }
                 val main = MainContext(narrow, startLibrary, appVersion, chooseFolder) { picking = true }
@@ -130,6 +136,8 @@ fun DesktopApp(
                     picking = false
                 }
             }
+            val editing = tracks[editingId]
+            if (settings.setupDone && editing != null) DesktopTagEditor(model, editing, editor) { editingId = null }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 104.dp))
         }
     }
@@ -355,7 +363,8 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
                     Icon(if (state.isPlaying) DiscIcons.Pause else DiscIcons.Play, null, Modifier.size(16.dp), tint = disc.accentInk)
                     Text(if (state.isPlaying) "Pause" else "Play", color = disc.accentInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
-                SoonButton(DiscIcons.Edit, "Edit metadata") { model.message(SOON) }
+                val editSong = LocalEditSong.current
+                ActionButton(DiscIcons.Edit, "Edit metadata", enabled = track != null) { track?.let(editSong) }
                 SoonButton(DiscIcons.Lyrics, "Lyrics") { model.message(SOON) }
             }
             Text("CLICK THE DISC TO PLAY OR PAUSE", Modifier.padding(top = 18.dp), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.08.em)
@@ -371,6 +380,18 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
             Box(Modifier.weight(1.05f), contentAlignment = Alignment.Center) { discPart() }
             Box(Modifier.weight(0.95f)) { copy() }
         }
+    }
+}
+
+@Composable
+private fun ActionButton(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(12.dp)).border(1.dp, disc.line, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, null, Modifier.size(16.dp), tint = disc.text)
+        Text(label, color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -187,6 +187,28 @@ class AndroidPlayer(context: Context) : MusicPlayer {
 
     override fun setVolume(volume: Float) = command { it.volume = volume.coerceIn(0f, 1f) }
 
+    override fun updateItem(item: QueueItem, reload: Boolean, play: Boolean) = command { c ->
+        val id = item.id.toString()
+        if (id !in known) return@command
+        known = known + (id to item)
+        // Noted before replacing: right after a replace the controller can report another index for a moment.
+        val current = c.currentMediaItemIndex
+        val position = c.currentPosition
+        for (i in 0 until c.mediaItemCount) {
+            if (c.getMediaItemAt(i).mediaId == id) c.replaceMediaItem(i, item.toMediaItem())
+        }
+        if (reload && c.getMediaItemAt(current).mediaId == id) {
+            // The file was rewritten in place: stopping drops the old reader, and preparing
+            // opens the new file at the same spot (the queue and shuffle order stay as they are).
+            pendingSeekMs = null
+            c.stop()
+            c.seekTo(current, position)
+            c.prepare()
+            c.playWhenReady = play
+        }
+        publish()
+    }
+
     override fun release() {
         main.post {
             released = true

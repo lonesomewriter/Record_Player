@@ -160,6 +160,21 @@ class AndroidPlayerTest {
         assertEquals(last, back.current)
     }
 
+    /** Saving tags on Android rewrites the playing file in place; the player reopens it and carries on. */
+    @Test
+    fun reloadAfterARewriteKeepsPlayingAtTheSameSpot() {
+        // Not the first song, as in the app (where the walk-through caught the reload being skipped).
+        val song = tone("flac")
+        player.setQueue(listOf(tone("ogg"), tone("mp3"), song, tone("opus")), startIndex = 2)
+        await(what = "playing past 0.6 s") { it.isPlaying && it.index == 2 && it.positionMs >= 600 }
+        player.pause()
+        val paused = await(what = "paused") { !it.isPlaying }.positionMs
+        player.updateItem(song.copy(title = "Renamed"), reload = true, play = true)
+        val s = await(what = "playing again with the new title") { it.isPlaying && it.current?.title == "Renamed" }
+        assertEquals(2, s.index, "still the same song")
+        assertTrue(s.positionMs in (paused - 300)..(paused + 800), "carried on near ${paused} ms, at ${s.positionMs} ms")
+    }
+
     @Test
     fun queueCanStartPartWayIntoASong() {
         player.setQueue(listOf(tone("flac"), tone("ogg")), startIndex = 1, playWhenReady = false, startPositionMs = 1_200)

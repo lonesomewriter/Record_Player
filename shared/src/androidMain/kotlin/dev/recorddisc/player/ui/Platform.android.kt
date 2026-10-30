@@ -1,5 +1,6 @@
 package dev.recorddisc.player.ui
 
+import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.provider.Settings
@@ -14,6 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 
 @Composable
@@ -46,4 +49,17 @@ actual fun SystemBarsEffect(light: Boolean) {
         }
         activity.enableEdgeToEdge(style, style)
     }
+}
+
+actual fun imageSize(bytes: ByteArray): Pair<Int, Int>? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    return if (bounds.outWidth > 0 && bounds.outHeight > 0) bounds.outWidth to bounds.outHeight else null
+}
+
+actual fun decodeImage(bytes: ByteArray, maxSizePx: Int): ImageBitmap? {
+    val (w, h) = imageSize(bytes) ?: return null
+    var sample = 1
+    while (maxOf(w, h) / (sample * 2) >= maxSizePx) sample *= 2
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
 }

@@ -1,6 +1,6 @@
 # Record Disc UI: Light theme and Theme setting (Part 3, final step)
 
-- **Time:** 2026-10-30 14:45 UTC to 15:40 UTC
+- **Time:** 2026-10-30 14:45 UTC to 15:10 UTC
 - **Change:** Settings → Theme now works on both platforms (System / Dark / Light), with a warm-paper light theme built to the approved mockup. The Android Now Playing screen no longer has an "Edit metadata" button under the controls; Edit metadata stays in its ⋮ menu.
 - **PM decisions:**
   - The light theme follows the approved "warm paper" mockup (the Theme switch in `disc-concept-android.html` / `disc-concept-desktop.html`): cream surfaces, brown-black text, the disc stays black vinyl.

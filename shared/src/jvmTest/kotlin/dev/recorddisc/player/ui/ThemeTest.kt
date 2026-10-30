@@ -29,6 +29,13 @@ class ThemeTest {
     }
 
     @Test
+    fun errorTextReadsInBothThemes() {
+        for (c in listOf(DiscColors(), DiscColors.LIGHT)) {
+            for (bg in listOf(c.panel, c.panel2)) assertTrue(contrast(c.error, bg) >= 4.5f, "error on $bg (light=${c.isLight})")
+        }
+    }
+
+    @Test
     fun darkThemeIsUnchanged() {
         assertEquals(DiscColors(), DiscColors.forAccent(Color(0xFFE0A458)))
     }

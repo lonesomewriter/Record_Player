@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.platform.LocalWindowInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,3 +35,19 @@ actual fun systemPrefersDark(): Boolean {
 
 @Composable
 actual fun SystemBarsEffect(light: Boolean) = Unit
+
+actual fun imageSize(bytes: ByteArray): Pair<Int, Int>? =
+    runCatching { org.jetbrains.skia.Image.makeFromEncoded(bytes).use { it.width to it.height } }.getOrNull()
+
+actual fun decodeImage(bytes: ByteArray, maxSizePx: Int): ImageBitmap? = runCatching {
+    org.jetbrains.skia.Image.makeFromEncoded(bytes).use { image ->
+        val scale = maxSizePx.toFloat() / maxOf(image.width, image.height)
+        if (scale >= 1f) return@use image.toComposeImageBitmap()
+        val w = (image.width * scale).toInt().coerceAtLeast(1)
+        val h = (image.height * scale).toInt().coerceAtLeast(1)
+        org.jetbrains.skia.Surface.makeRasterN32Premul(w, h).use { surface ->
+            surface.canvas.drawImageRect(image, org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()))
+            surface.makeImageSnapshot().use { it.toComposeImageBitmap() }
+        }
+    }
+}.getOrNull()

@@ -52,6 +52,12 @@ class DesktopPlayer(audioSink: String? = null, gapless: Boolean = true) : MusicP
         }
     }
 
+    /** Saves on Linux swap the file atomically, so GStreamer keeps playing the old one; only the details change. */
+    override fun updateItem(item: QueueItem, reload: Boolean, play: Boolean) = command {
+        queue.update(item)
+        publish()
+    }
+
     override fun setQueue(items: List<QueueItem>, startIndex: Int, playWhenReady: Boolean, startPositionMs: Long) = command {
         queue.set(items, startIndex)
         failures = 0

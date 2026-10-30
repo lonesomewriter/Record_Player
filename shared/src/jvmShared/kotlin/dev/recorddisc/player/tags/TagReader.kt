@@ -14,8 +14,8 @@ import java.io.File
 import java.util.logging.Level
 import java.util.logging.Logger
 
-/** Reads library tags with jaudiotagger, and with [OpusTags] for Opus files. */
-object TagReader {
+/** jaudiotagger settings shared by [TagReader] and [TagWriter]; applied once, on first use. */
+internal object TagOptions {
     init {
         Logger.getLogger("org.jaudiotagger").level = Level.OFF
         // WAV's default RIFF-INFO tags can't hold cover art; use the ID3 chunk, synced with INFO.
@@ -23,6 +23,15 @@ object TagReader {
             wavOptions = WavOptions.READ_ID3_ONLY_AND_SYNC
             wavSaveOptions = WavSaveOptions.SAVE_BOTH_AND_SYNC
         }
+    }
+
+    fun ensure() = Unit
+}
+
+/** Reads library tags with jaudiotagger, and with [OpusTags] for Opus files. */
+object TagReader {
+    init {
+        TagOptions.ensure()
     }
 
     fun read(file: File): TrackTags {

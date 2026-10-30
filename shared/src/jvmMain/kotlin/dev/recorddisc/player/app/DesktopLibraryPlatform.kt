@@ -3,9 +3,14 @@ package dev.recorddisc.player.app
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import dev.recorddisc.player.library.DesktopPaths
+import dev.recorddisc.player.library.DesktopTagSaver
+import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FolderLibrarySource
 import dev.recorddisc.player.library.FolderWatcher
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.SavedFile
+import dev.recorddisc.player.library.TagEdit
+import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.tags.TagReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,6 +30,14 @@ class DesktopLibraryPlatform : LibraryPlatform {
 
     override fun watch(folder: String, onChange: () -> Unit): AutoCloseable = FolderWatcher(File(folder).toPath(), onChange)
 
+    override suspend fun editSupport(track: TrackEntity): EditSupport = withContext(Dispatchers.IO) {
+        if (!track.tagsReadable) EditSupport.ReadOnly(UNREADABLE) else DesktopTagSaver.support(File(track.location))
+    }
+
+    override suspend fun saveTags(track: TrackEntity, edit: TagEdit): SavedFile = withContext(Dispatchers.IO) {
+        DesktopTagSaver.save(File(track.location), edit)
+    }
+
     override fun folderLabel(folder: String): String =
         if (home != null && (folder == home || folder.startsWith("$home/"))) "~" + folder.removePrefix(home) else folder
 
@@ -40,5 +53,9 @@ class DesktopLibraryPlatform : LibraryPlatform {
                 surface.makeImageSnapshot().use { it.toComposeImageBitmap() }
             }
         }
+    }
+
+    private companion object {
+        const val UNREADABLE = "Its tags couldn't be read, so saving could damage it"
     }
 }

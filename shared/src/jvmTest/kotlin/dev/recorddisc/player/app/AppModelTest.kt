@@ -8,6 +8,8 @@ import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.SettingEntity
+import dev.recorddisc.player.library.TagEdit
+import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.library.TrackTags
 import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.PlaybackState
@@ -267,6 +269,61 @@ class AppModelTest {
         model.settings.await("light") { it?.theme == ThemeMode.Light }
         model.setTheme(ThemeMode.System)
         model.settings.await("system") { it?.theme == ThemeMode.System }
+    }
+
+    private suspend fun libraryWithQueue(platform: FakePlatform, player: FakePlayer): Pair<AppModel, TrackEntity> {
+        val model = AppModel(database(), player, platform, scope)
+        model.scan("/music")
+        val tracks = model.tracks.await("tracks") { it.size == 3 }
+        val song = tracks.first { it.title == "Paper Lanterns" }
+        model.playAll(tracks, shuffle = false)
+        player.skipTo(tracks.indexOf(song))
+        return model to song
+    }
+
+    private val edit = TagEdit("Lanterns (Remaster)", "Neon Coast", "After Hours", "Neon Coast", 2024, 2, "Synthwave")
+
+    @Test
+    fun savedTagsUpdateTheLibraryAndQueue() = runBlocking {
+        val platform = FakePlatform()
+        val player = FakePlayer()
+        val (model, song) = libraryWithQueue(platform, player)
+        val revision = model.artwork.revision.value
+        assertNull(model.saveTags(song, edit))
+        val updated = model.tracks.await("saved") { list -> list.any { it.title == "Lanterns (Remaster)" } }.first { it.id == song.id }
+        assertEquals(2024, updated.year)
+        assertEquals(110, updated.sizeBytes)
+        assertEquals("Lanterns (Remaster)", player.state.value.current?.title)
+        // Desktop swaps the file atomically: the song isn't reloaded.
+        assertEquals(false, player.updates.last().second)
+        assertTrue(model.artwork.revision.value > revision)
+        // A later scan sees the file as unchanged and doesn't read it again.
+        val reads = platform.tagReads
+        val listed = platform.listCalls
+        model.rescanNow()
+        withTimeout(5_000) { while (platform.listCalls == listed || model.scan.value !is ScanState.Done) delay(20) }
+        assertEquals(reads, platform.tagReads)
+    }
+
+    @Test
+    fun inPlaceSaveOfThePlayingSongResumesIt() = runBlocking {
+        val platform = FakePlatform().apply { inPlace = true }
+        val player = FakePlayer()
+        val (model, song) = libraryWithQueue(platform, player)
+        assertTrue(player.state.value.isPlaying)
+        assertNull(model.saveTags(song, edit))
+        val (_, reload, play) = player.updates.last()
+        assertTrue(reload && play, "reloaded and playing again")
+    }
+
+    @Test
+    fun failedSaveReturnsTheReasonAndChangesNothing() = runBlocking {
+        val platform = FakePlatform().apply { failSave = "Not enough free space to save safely" }
+        val player = FakePlayer()
+        val (model, song) = libraryWithQueue(platform, player)
+        assertEquals("Couldn't save: Not enough free space to save safely", model.saveTags(song, edit))
+        assertEquals("Paper Lanterns", model.tracks.value.first { it.id == song.id }.title)
+        assertTrue(player.updates.isEmpty())
     }
 
     @Test

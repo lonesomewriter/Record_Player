@@ -2,9 +2,14 @@ package dev.recorddisc.player.app
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -21,6 +26,18 @@ class ArtworkCache(private val platform: LibraryPlatform, private val capacity: 
     /** Access order: the eldest entry is dropped first. Files without art are cached as null too. */
     private val entries = LinkedHashMap<String, Entry>()
     private var pixels = 0L
+
+    private val _revision = MutableStateFlow(0)
+    /** Goes up when a song's cover changes, so covers on screen are looked up again. */
+    val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    /** Forgets [location]'s cover (every size), e.g. after it was replaced or removed. */
+    suspend fun invalidate(location: String) {
+        lock.withLock {
+            entries.keys.filter { it.substringAfter('|') == location }.forEach { pixels -= entries.remove(it)!!.pixels }
+        }
+        _revision.value++
+    }
 
     suspend fun get(location: String, maxSizePx: Int): ImageBitmap? {
         val key = "$maxSizePx|$location"
@@ -49,7 +66,9 @@ class ArtworkCache(private val platform: LibraryPlatform, private val capacity: 
 
 /** Cover art for [location] (null while loading, or when the file has none). */
 @Composable
-fun ArtworkCache.rememberArtwork(location: String?, maxSizePx: Int): State<ImageBitmap?> =
-    produceState<ImageBitmap?>(null, location, maxSizePx) {
+fun ArtworkCache.rememberArtwork(location: String?, maxSizePx: Int): State<ImageBitmap?> {
+    val rev by revision.collectAsState()
+    return produceState<ImageBitmap?>(null, location, maxSizePx, rev) {
         value = location?.let { get(it, maxSizePx) }
     }
+}

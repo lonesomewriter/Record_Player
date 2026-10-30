@@ -18,6 +18,8 @@ import dev.recorddisc.player.app.ThemeMode
 import dev.recorddisc.player.app.FakePlayer
 import dev.recorddisc.player.app.LibraryPlatform
 import dev.recorddisc.player.app.ScanState
+import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
@@ -75,6 +77,9 @@ class DesktopScreenshotTest {
     /** Holds the scan after [pauseAfter] files until [resume] completes. */
     private inner class MockupPlatform(val pauseAfter: Int = Int.MAX_VALUE, val songs: List<Song> = this@DesktopScreenshotTest.songs) : LibraryPlatform {
         val resume = CompletableDeferred<Unit>()
+        /** What the song details editor is told about the file. */
+        var support: EditSupport = EditSupport.Editable
+        override suspend fun editSupport(track: TrackEntity) = support
         override val suggestedFolder = "/home/you/Music"
         override fun folderLabel(folder: String) = folder.replace("/home/you", "~")
         override suspend fun loadArtwork(location: String, maxSizePx: Int): ImageBitmap? =
@@ -99,9 +104,12 @@ class DesktopScreenshotTest {
     private fun <T> StateFlow<T>.await(check: (T) -> Boolean): T = runBlocking { withTimeout(5_000) { first(check) } }
 
     /** Draws a few seconds of frames (so the disc is mid-spin), then saves the last one. */
-    private fun shoot(model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home, library: LibraryNav? = null, picker: Boolean = false) {
+    private fun shoot(
+        model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home,
+        library: LibraryNav? = null, picker: Boolean = false, editor: Boolean = false,
+    ) {
         val scene = ImageComposeScene(width, height, Density(1f)) {
-            DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0", startAccentPicker = picker)
+            DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0", startAccentPicker = picker, startEditor = editor)
         }
         try {
             var image = scene.render(0)
@@ -165,6 +173,16 @@ class DesktopScreenshotTest {
         model.setTheme(ThemeMode.Light)
         model.settings.await { it?.theme == ThemeMode.Light }
         shoot(model, "26-light-accent-picker", view = DesktopView.Settings, picker = true)
+        shoot(model, "29-light-tag-editor", editor = true)
+        model.setTheme(ThemeMode.Dark)
+        model.settings.await { it?.theme == ThemeMode.Dark }
+        shoot(model, "27-tag-editor", editor = true)
+        shoot(model, "28-tag-editor-narrow", width = 860, height = 1000, editor = true)
+        platform.support = EditSupport.ReadOnly("You don't have permission to change this file")
+        shoot(model, "30-tag-editor-read-only", editor = true)
+        platform.support = EditSupport.Editable
+        model.setTheme(ThemeMode.Light)
+        model.settings.await { it?.theme == ThemeMode.Light }
         model.setAccent(AccentPreset.Gold)
         model.settings.await { it?.accent == AccentPreset.Gold }
         shoot(model, "19-light-home")
