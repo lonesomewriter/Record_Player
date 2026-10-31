@@ -261,10 +261,20 @@ private fun CoverRow(model: AppModel, track: TrackEntity, state: EditorState, ac
     }
 }
 
-/** Allow editing (Android, read-only folder) or why this file can't be changed. */
 @Composable
-private fun ColumnScope.Notice(state: EditorState, actions: EditorActions) {
-    val support = state.support
+private fun ColumnScope.Notice(state: EditorState, actions: EditorActions) = EditNotice(state.support, actions)
+
+/**
+ * Allow editing (Android, read-only folder) or why the file can't be changed; nothing when
+ * editing is possible. [readOnlyTitle] and [allowText] word it for the editor using it.
+ */
+@Composable
+internal fun ColumnScope.EditNotice(
+    support: EditSupport?,
+    actions: EditorActions,
+    readOnlyTitle: String = "This file can't be changed",
+    allowText: String = "To change song files, allow Record Disc to edit your music folder. You'll choose the same folder again.",
+) {
     if (support == null || support == EditSupport.Editable) return
     val shape = RoundedCornerShape(12.dp)
     Column(
@@ -275,14 +285,11 @@ private fun ColumnScope.Notice(state: EditorState, actions: EditorActions) {
         when (support) {
             EditSupport.NeedsWriteAccess -> {
                 Text("Allow editing", color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    "To change song files, allow Record Disc to edit your music folder. You'll choose the same folder again.",
-                    color = disc.text, fontSize = 12.sp, lineHeight = 1.5.em,
-                )
+                Text(allowText, color = disc.text, fontSize = 12.sp, lineHeight = 1.5.em)
                 PrimaryButton("Allow editing", Modifier.padding(top = 10.dp), onClick = actions.allowEditing)
             }
             is EditSupport.ReadOnly -> {
-                Text("This file can't be changed", color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(readOnlyTitle, color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text(support.reason, color = disc.text, fontSize = 12.sp, lineHeight = 1.5.em)
             }
             EditSupport.Editable -> Unit
@@ -291,8 +298,12 @@ private fun ColumnScope.Notice(state: EditorState, actions: EditorActions) {
 }
 
 @Composable
-private fun SaveError(state: EditorState) {
-    val error = state.error ?: return
+private fun SaveError(state: EditorState) = ErrorBox(state.error)
+
+/** A save error in a red box; nothing when [error] is null. */
+@Composable
+internal fun ErrorBox(error: String?) {
+    error ?: return
     val shape = RoundedCornerShape(12.dp)
     Text(
         error, Modifier.padding(top = 14.dp).fillMaxWidth().clip(shape).border(1.dp, disc.error, shape).padding(horizontal = 12.dp, vertical = 10.dp),

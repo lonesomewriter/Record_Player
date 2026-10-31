@@ -62,7 +62,7 @@ import dev.recorddisc.player.playback.RepeatMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
-enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, EditTags }
+enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, EditTags, EditLyrics }
 
 private const val SOON = "Coming in a later update"
 
@@ -99,19 +99,22 @@ private fun BoxScope.PhoneScreens(
     // The song being edited, and the screen the editor goes back to.
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var lyricsId by rememberSaveable { mutableStateOf<Long?>(null) }
     val closeEditor = { screen = editReturn }
     // e.g. the playback notification was tapped: show Now Playing.
     LaunchedEffect(openRequests) { openRequests.collect { screen = it } }
-    PlatformBackHandler(enabled = screen != PhoneScreen.Home) { if (screen == PhoneScreen.EditTags) closeEditor() else screen = PhoneScreen.Home }
+    // The lyrics editor handles Back itself (it asks before discarding changes).
+    PlatformBackHandler(enabled = screen != PhoneScreen.Home && screen != PhoneScreen.EditLyrics) { if (screen == PhoneScreen.EditTags) closeEditor() else screen = PhoneScreen.Home }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
     val tracks = rememberTrackIndex(model)
+    androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t -> lyricsId = t.id; editReturn = screen; screen = PhoneScreen.EditLyrics }) {
     ProvideEditSong({ t -> editingId = t.id; editReturn = screen; screen = PhoneScreen.EditTags }) {
         AnimatedContent(
             screen,
             transitionSpec = { (fadeIn() + slideInHorizontally { it / 12 }) togetherWith fadeOut() },
             modifier = Modifier.fillMaxSize()
                 // Swipe left to go back to the disc (not from the editor, where it would lose typed changes).
-                .swipeLeft { if (screen != PhoneScreen.Home && screen != PhoneScreen.EditTags) screen = PhoneScreen.Home },
+                .swipeLeft { if (screen !in setOf(PhoneScreen.Home, PhoneScreen.EditTags, PhoneScreen.EditLyrics)) screen = PhoneScreen.Home },
         ) { shown ->
             when (shown) {
                 PhoneScreen.Home -> PhoneHome(spin, art) { screen = it }
@@ -123,8 +126,13 @@ private fun BoxScope.PhoneScreens(
                     val track = tracks[editingId]
                     if (track == null) LaunchedEffect(Unit) { closeEditor() } else PhoneTagEditor(model, track, editor, onClose = closeEditor)
                 }
+                PhoneScreen.EditLyrics -> Box(Modifier.fillMaxSize()) {
+                    val track = tracks[lyricsId]
+                    if (track == null) LaunchedEffect(Unit) { closeEditor() } else PhoneLyricsEditor(model, track, state, editor, onClose = closeEditor)
+                }
             }
         }
+    }
     }
     if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings) && state.current != null) {
         MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { screen = PhoneScreen.NowPlaying }
@@ -204,26 +212,35 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             CircleIconButton("✕", "Close now playing", onClose)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val showLyrics = model.settings.collectAsState().value?.showLyrics == true
                 Row(
-                    Modifier.alpha(0.45f).clip(RoundedCornerShape(50)).border(1.dp, disc.line, RoundedCornerShape(50))
-                        .clickable { model.message(SOON) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                    Modifier.clip(RoundedCornerShape(50)).background(if (showLyrics) disc.soft else disc.tint.copy(alpha = 0.03f))
+                        .border(1.dp, if (showLyrics) disc.accent.copy(alpha = 0.4f) else disc.line, RoundedCornerShape(50))
+                        .clickable(onClickLabel = if (showLyrics) "Hide lyrics" else "Show lyrics") { model.setShowLyrics(!showLyrics) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Icon(DiscIcons.Lyrics, null, Modifier.size(16.dp), tint = disc.text)
-                    Text("Lyrics", color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    val tint = if (showLyrics) disc.accentReadable else disc.text
+                    Icon(DiscIcons.Lyrics, null, Modifier.size(16.dp), tint = tint)
+                    Text("Lyrics", color = tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Box {
                     CircleIconButton("⋮", "More options") { menu = true }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         val editSong = LocalEditSong.current
+                        val editLyrics = LocalEditLyrics.current
                         for (item in listOf("Edit lyrics", "Edit metadata", "Add to playlist")) {
-                            val ready = item == "Edit metadata" && track != null
+                            val ready = item != "Add to playlist" && track != null
                             DropdownMenuItem(
                                 text = { Text(item, color = if (ready) disc.text else disc.muted) },
                                 trailingIcon = { if (!ready) SoonTag() },
                                 onClick = {
                                     menu = false
-                                    if (ready) editSong(track!!) else model.message(SOON)
+                                    when {
+                                        !ready -> model.message(SOON)
+                                        item == "Edit lyrics" -> editLyrics(track!!)
+                                        else -> editSong(track!!)
+                                    }
                                 },
                             )
                         }
@@ -247,6 +264,9 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
                 DiscIcons.Repeat, state.repeatMode.label(), 44.dp, 22.dp, { model.player.setRepeatMode(state.repeatMode.next()) },
                 active = state.repeatMode != RepeatMode.Off, badge = if (state.repeatMode == RepeatMode.One) "1" else null,
             )
+        }
+        if (model.settings.collectAsState().value?.showLyrics == true) {
+            LyricsPanel(model, track, state, windowHeight = 104.dp, textSize = 14, modifier = Modifier.padding(top = 14.dp))
         }
         Spacer(Modifier.weight(1f))
         Text(

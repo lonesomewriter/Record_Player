@@ -20,6 +20,8 @@ import dev.recorddisc.player.app.LibraryPlatform
 import dev.recorddisc.player.app.ScanState
 import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.library.EditSupport
+import dev.recorddisc.player.library.Lyrics
+import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
@@ -80,6 +82,13 @@ class DesktopScreenshotTest {
         /** What the song details editor is told about the file. */
         var support: EditSupport = EditSupport.Editable
         override suspend fun editSupport(track: TrackEntity) = support
+        override suspend fun lyricsSupport(track: TrackEntity) = support
+        /** The mockup's lyrics for Midnight Drive. */
+        override suspend fun readLyrics(track: TrackEntity): Lyrics? = if (!track.location.contains("Midnight Drive")) null else Lrc.parse(
+            "[00:06.20]Headlights paint the empty road\n[00:12.80]Neon hums a slower code\n[00:19.40]Every sign says take it slow\n" +
+                "[00:26.00]Every exit, let it go\n[00:34.10]Midnight drive, no need to hide\n[00:40.60]City breathing at my side\n" +
+                "[00:47.20]Radio glow, a borrowed light\n[00:53.80]We don't stop until it's bright\n",
+        )
         override val suggestedFolder = "/home/you/Music"
         override fun folderLabel(folder: String) = folder.replace("/home/you", "~")
         override suspend fun loadArtwork(location: String, maxSizePx: Int): ImageBitmap? =
@@ -106,10 +115,13 @@ class DesktopScreenshotTest {
     /** Draws a few seconds of frames (so the disc is mid-spin), then saves the last one. */
     private fun shoot(
         model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home,
-        library: LibraryNav? = null, picker: Boolean = false, editor: Boolean = false,
+        library: LibraryNav? = null, picker: Boolean = false, editor: Boolean = false, lyricsEditor: Boolean = false,
     ) {
         val scene = ImageComposeScene(width, height, Density(1f)) {
-            DesktopApp(model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0", startAccentPicker = picker, startEditor = editor)
+            DesktopApp(
+                model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0",
+                startAccentPicker = picker, startEditor = editor, startLyricsEditor = lyricsEditor,
+            )
         }
         try {
             var image = scene.render(0)
@@ -181,6 +193,14 @@ class DesktopScreenshotTest {
         platform.support = EditSupport.ReadOnly("You don't have permission to change this file")
         shoot(model, "30-tag-editor-read-only", editor = true)
         platform.support = EditSupport.Editable
+        // Lyrics: the panel under Home's buttons (line at 42 s highlighted), and the editor.
+        model.setShowLyrics(true)
+        model.settings.await { it?.showLyrics == true }
+        shoot(model, "31-lyrics-panel")
+        shoot(model, "32-lyrics-editor", lyricsEditor = true)
+        shoot(model, "33-lyrics-panel-narrow", width = 860, height = 1200)
+        model.setShowLyrics(false)
+        model.settings.await { it?.showLyrics == false }
         model.setTheme(ThemeMode.Light)
         model.settings.await { it?.theme == ThemeMode.Light }
         model.setAccent(AccentPreset.Gold)

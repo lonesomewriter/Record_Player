@@ -148,6 +148,7 @@ private fun Gone(what: String) =
 fun SongMenuButton(model: AppModel, track: TrackEntity, size: Dp = 28.dp) {
     var open by remember { mutableStateOf(false) }
     val editSong = LocalEditSong.current
+    val editLyrics = LocalEditLyrics.current
     Box {
         Text(
             "⋮", Modifier.width(size).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "More options") { open = true }.padding(vertical = 4.dp),
@@ -155,13 +156,17 @@ fun SongMenuButton(model: AppModel, track: TrackEntity, size: Dp = 28.dp) {
         )
         DropdownMenu(open, onDismissRequest = { open = false }) {
             for (item in listOf("Add to playlist", "Edit metadata", "Edit lyrics")) {
-                val ready = item == "Edit metadata"
+                val ready = item != "Add to playlist"
                 DropdownMenuItem(
                     text = { Text(item, color = if (ready) disc.text else disc.muted) },
                     trailingIcon = { if (!ready) SoonTag() },
                     onClick = {
                         open = false
-                        if (ready) editSong(track) else model.message(SOON)
+                        when {
+                            !ready -> model.message(SOON)
+                            item == "Edit lyrics" -> editLyrics(track)
+                            else -> editSong(track)
+                        }
                     },
                 )
             }

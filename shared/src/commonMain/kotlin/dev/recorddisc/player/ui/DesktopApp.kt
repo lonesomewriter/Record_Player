@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -82,6 +83,7 @@ fun DesktopApp(
     startAccentPicker: Boolean = false,
     editor: EditorActions = EditorActions(),
     startEditor: Boolean = false,
+    startLyricsEditor: Boolean = false,
 ) {
     val settings = model.settings.collectAsState().value
     DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458), light = settings?.useLightTheme() == true) {
@@ -94,6 +96,7 @@ fun DesktopApp(
             val spin = rememberDiscSpin(state.isPlaying || scan is ScanState.Running, periodMs = 18_000f)
             var picking by remember { mutableStateOf(startAccentPicker) }
             var editingId by remember { mutableStateOf(if (startEditor) state.current?.id else null) }
+            var lyricsId by remember { mutableStateOf(if (startLyricsEditor) state.current?.id else null) }
             val tracks = rememberTrackIndex(model)
             if (!settings.setupDone) {
                 var folder by remember { mutableStateOf(model.platform.suggestedFolder) }
@@ -105,7 +108,8 @@ fun DesktopApp(
                     onStart = { model.finishSetup() },
                     narrow = narrow,
                 )
-            } else ProvideEditSong({ editingId = it.id }) {
+            } else androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t: dev.recorddisc.player.library.TrackEntity -> lyricsId = t.id }) {
+            ProvideEditSong({ editingId = it.id }) {
                 var view by remember { mutableStateOf(startView) }
                 var queueOpen by remember { mutableStateOf(true) }
                 val main = MainContext(narrow, startLibrary, appVersion, chooseFolder) { picking = true }
@@ -136,8 +140,11 @@ fun DesktopApp(
                     picking = false
                 }
             }
+            }
             val editing = tracks[editingId]
             if (settings.setupDone && editing != null) DesktopTagEditor(model, editing, editor) { editingId = null }
+            val lyricsTrack = tracks[lyricsId]
+            if (settings.setupDone && lyricsTrack != null) DesktopLyricsEditor(model, lyricsTrack, state, editor) { lyricsId = null }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 104.dp))
         }
     }
@@ -365,9 +372,13 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
                 }
                 val editSong = LocalEditSong.current
                 ActionButton(DiscIcons.Edit, "Edit metadata", enabled = track != null) { track?.let(editSong) }
-                SoonButton(DiscIcons.Lyrics, "Lyrics") { model.message(SOON) }
+                val showLyrics = model.settings.collectAsState().value?.showLyrics == true
+                ActionButton(DiscIcons.Lyrics, "Lyrics", enabled = true, active = showLyrics) { model.setShowLyrics(!showLyrics) }
             }
             Text("CLICK THE DISC TO PLAY OR PAUSE", Modifier.padding(top = 18.dp), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.08.em)
+            if (model.settings.collectAsState().value?.showLyrics == true) {
+                LyricsPanel(model, track, state, windowHeight = 132.dp, textSize = 15, modifier = Modifier.padding(top = 20.dp).widthIn(max = 460.dp))
+            }
         }
     }
     if (narrow) {
@@ -384,14 +395,15 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
 }
 
 @Composable
-private fun ActionButton(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun ActionButton(icon: ImageVector, label: String, enabled: Boolean, active: Boolean = false, onClick: () -> Unit) {
     Row(
-        Modifier.alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(12.dp)).border(1.dp, disc.line, RoundedCornerShape(12.dp))
+        Modifier.alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(12.dp)).background(if (active) disc.soft else disc.tint.copy(alpha = 0f))
+            .border(1.dp, if (active) disc.accent.copy(alpha = 0.4f) else disc.line, RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(icon, null, Modifier.size(16.dp), tint = disc.text)
-        Text(label, color = disc.text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Icon(icon, null, Modifier.size(16.dp), tint = if (active) disc.accentReadable else disc.text)
+        Text(label, color = if (active) disc.accentReadable else disc.text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
