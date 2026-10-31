@@ -11,7 +11,20 @@ import dev.recorddisc.player.library.LyricLine
 import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.Lyrics
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.M3u
+import dev.recorddisc.player.library.M3uImportItem
+import dev.recorddisc.player.library.M3uImportPreview
+import dev.recorddisc.player.library.M3uPathMode
+import dev.recorddisc.player.library.M3uTrack
+import dev.recorddisc.player.library.PlaylistBundlePreview
+import dev.recorddisc.player.library.PlaylistEntity
+import dev.recorddisc.player.library.PlaylistItemEntity
+import dev.recorddisc.player.library.PlaylistView
+import dev.recorddisc.player.library.PlaylistTextFile
+import dev.recorddisc.player.library.PlaylistImportFile
+import dev.recorddisc.player.library.ImportedPlaylistSong
 import dev.recorddisc.player.library.SavedFile
+import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.library.SettingEntity
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TagSaveException
@@ -20,6 +33,8 @@ import dev.recorddisc.player.library.groupAlbums
 import dev.recorddisc.player.library.groupArtists
 import dev.recorddisc.player.library.searchText
 import dev.recorddisc.player.library.trackEntity
+import dev.recorddisc.player.library.displayTitle
+import dev.recorddisc.player.library.matchTrackByTags
 import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CancellationException
@@ -36,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -61,6 +77,42 @@ interface LibraryPlatform {
     fun watch(folder: String, onChange: () -> Unit): AutoCloseable? = null
     /** Gives up access to a folder that is no longer the music folder (Android's folder grant). */
     fun releaseFolder(folder: String) = Unit
+    /** Current time used for persisted creation timestamps. */
+    fun currentTimeMs(): Long = 0
+    /** Saves a picked JPEG or PNG cover in private app storage and returns its stable path. */
+    suspend fun savePlaylistCover(playlistId: Long, extension: String, bytes: ByteArray): String =
+        throw UnsupportedOperationException("Playlist covers aren't available here")
+    suspend fun deletePlaylistCover(path: String) = Unit
+    suspend fun loadPlaylistCover(path: String, maxSizePx: Int): ImageBitmap? = null
+    /** Writes a small text export to the destination selected by the user. */
+    suspend fun writeExport(destination: String, bytes: ByteArray): Unit =
+        throw UnsupportedOperationException("Playlist export isn't available here")
+    /** Streams a generated file, such as a `.rdplaylist`, to the destination selected by the user. */
+    suspend fun writeExportFile(destination: String, sourcePath: String): Unit =
+        throw UnsupportedOperationException("Playlist export isn't available here")
+    /** Copies new bundle songs and their lyrics into `Imported/<playlistName>` under [musicFolder]. */
+    suspend fun importSongs(
+        playlistName: String,
+        musicFolder: String,
+        files: List<PlaylistImportFile>,
+    ): List<ImportedPlaylistSong> = throw UnsupportedOperationException("Playlist import isn't available here")
+    suspend fun readPlaylistText(location: String): PlaylistTextFile =
+        throw UnsupportedOperationException("Playlist import isn't available here")
+    suspend fun writePlaylistBundle(
+        destination: String,
+        name: String,
+        songs: List<TrackEntity>,
+        customCoverPath: String?,
+        fallbackCover: TrackEntity?,
+        includeLyrics: Boolean,
+    ): Unit = throw UnsupportedOperationException("Playlist bundle export isn't available here")
+    suspend fun readPlaylistBundle(location: String, library: List<TrackEntity>): PlaylistBundlePreview =
+        throw UnsupportedOperationException("Playlist bundle import isn't available here")
+    suspend fun cleanupPlaylistBundlePreview(preview: PlaylistBundlePreview) = Unit
+    /** Returns the path form stored in a Relative M3U export. */
+    fun relativePlaylistPath(track: TrackEntity, musicFolder: String): String = track.location
+    /** Resolves an M3U entry against its source file and the chosen music folder. */
+    suspend fun resolvePlaylistPath(path: String, playlistLocation: String?, musicFolder: String): String? = null
     /** Whether [track]'s file can be changed by the song details editor. */
     suspend fun editSupport(track: TrackEntity): EditSupport = EditSupport.ReadOnly("Editing isn't available here")
     /** Saves [edit] into [track]'s file. Throws with a message for the user if it can't; the file is then unchanged. */
@@ -100,6 +152,7 @@ class AppModel(
 ) {
     private val tracksDao = db.tracks()
     private val settingsDao = db.settings()
+    private val playlistsDao = db.playlists()
     private val scanner = LibraryScanner(tracksDao)
 
     /** Null until loaded from the database. */
@@ -108,6 +161,30 @@ class AppModel(
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     val tracks: StateFlow<List<TrackEntity>> = tracksDao.observeAll().stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** Playlists with library songs resolved; missing tracks remain stored in their original positions. */
+    val playlists: StateFlow<List<PlaylistView>> = combine(
+        playlistsDao.observeAll(),
+        playlistsDao.observeItems(),
+        tracks,
+    ) { savedPlaylists, savedItems, library ->
+        val byId = library.associateBy { it.id }
+        val itemsByPlaylist = savedItems.groupBy { it.playlistId }
+        savedPlaylists.map { playlist ->
+            val songs = itemsByPlaylist[playlist.id].orEmpty()
+                .sortedBy { it.position }
+                .mapNotNull { byId[it.trackId] }
+            PlaylistView(
+                id = playlist.id,
+                name = playlist.name,
+                songs = songs,
+                songCount = songs.size,
+                durationMs = songs.sumOf { it.durationMs ?: 0L },
+                coverPath = playlist.coverPath,
+                fallbackCover = songs.firstOrNull(),
+            )
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _libraryQuery = MutableStateFlow("")
     /** The Library's search text. */
@@ -143,6 +220,7 @@ class AppModel(
 
     /** Held while song details are being saved; scans wait for it. Declared before init, which can start a scan. */
     private val saveLock = Mutex()
+    private val playlistLock = Mutex()
 
     private val _accessRevision = MutableStateFlow(0)
     /** Goes up when folder access changes (Android: write access granted), so the editor checks again. */
@@ -301,6 +379,265 @@ class AppModel(
         play(tracks, if (shuffle) tracks.indices.random() else 0)
     }
 
+    suspend fun createPlaylist(name: String): PlaylistEntity = playlistLock.withLock {
+        val cleanName = name.trim()
+        require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
+        val uniqueName = uniquePlaylistName(cleanName)
+        val playlist = PlaylistEntity(name = uniqueName, createdMs = platform.currentTimeMs())
+        val id = playlistsDao.insert(playlist)
+        playlist.copy(id = id).also { message("Playlist created") }
+    }
+
+    suspend fun renamePlaylist(id: Long, name: String): PlaylistEntity = playlistLock.withLock {
+        val current = playlistsDao.get(id) ?: throw NoSuchElementException("Playlist not found")
+        val cleanName = name.trim()
+        require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
+        val renamed = current.copy(name = uniquePlaylistName(cleanName, id))
+        playlistsDao.update(renamed)
+        message("Playlist renamed")
+        renamed
+    }
+
+    suspend fun deletePlaylist(id: Long) = playlistLock.withLock {
+        val playlist = playlistsDao.get(id) ?: throw NoSuchElementException("Playlist not found")
+        check(playlistsDao.delete(id) > 0) { "Playlist not found" }
+        if (playlist.coverPath != null) platform.deletePlaylistCover(playlist.coverPath)
+        message("Playlist deleted")
+    }
+
+    /** Returns false, with a notice, when the song is already in this playlist. */
+    suspend fun addToPlaylist(playlistId: Long, trackId: Long): Boolean = playlistLock.withLock {
+        val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
+        val trackExists = tracksDao.observeAll().first().any { it.id == trackId }
+        require(trackExists) { "Song not found in the library" }
+        val items = playlistsDao.itemsFor(playlistId)
+        if (items.any { it.trackId == trackId }) {
+            message("Already in ${playlist.name}")
+            return@withLock false
+        }
+        val position = (items.maxOfOrNull { it.position } ?: -1) + 1
+        val inserted = playlistsDao.insertItem(PlaylistItemEntity(playlistId = playlistId, trackId = trackId, position = position))
+        if (inserted < 0) {
+            message("Already in ${playlist.name}")
+            return@withLock false
+        }
+        message("Added to ${playlist.name}")
+        true
+    }
+
+    suspend fun removeFromPlaylist(playlistId: Long, trackId: Long): Boolean = playlistLock.withLock {
+        check(playlistsDao.get(playlistId) != null) { "Playlist not found" }
+        val removed = playlistsDao.deleteItem(playlistId, trackId) > 0
+        if (removed) message("Removed from playlist")
+        removed
+    }
+
+    /** Moves [trackId] up or down relative to the other songs that are currently in the library. */
+    suspend fun movePlaylistTrack(playlistId: Long, trackId: Long, direction: Int): Boolean = playlistLock.withLock {
+        require(direction == -1 || direction == 1) { "Direction must be -1 or 1" }
+        check(playlistsDao.get(playlistId) != null) { "Playlist not found" }
+        val items = playlistsDao.itemsFor(playlistId)
+        val libraryIds = tracksDao.observeAll().first().mapTo(HashSet()) { it.id }
+        val visible = items.filter { it.trackId in libraryIds }
+        val currentIndex = visible.indexOfFirst { it.trackId == trackId }
+        val targetIndex = currentIndex + direction
+        if (currentIndex < 0 || targetIndex !in visible.indices) return@withLock false
+        val first = visible[currentIndex]
+        val second = visible[targetIndex]
+        playlistsDao.updateItems(
+            listOf(
+                first.copy(position = second.position),
+                second.copy(position = first.position),
+            ),
+        )
+        true
+    }
+
+    suspend fun setPlaylistCover(playlistId: Long, fileName: String, bytes: ByteArray) = playlistLock.withLock {
+        val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
+        require(bytes.isNotEmpty() && bytes.size <= TagRules.MAX_COVER_BYTES) { "Cover image must be 10 MB or smaller" }
+        val extension = fileName.substringAfterLast('.', "").lowercase()
+        require(extension in PLAYLIST_COVER_EXTENSIONS) { "Playlist cover must be a JPEG or PNG image" }
+        val path = platform.savePlaylistCover(playlistId, extension, bytes)
+        playlistsDao.update(playlist.copy(coverPath = path))
+        if (playlist.coverPath != null && playlist.coverPath != path) platform.deletePlaylistCover(playlist.coverPath)
+        message("Playlist cover updated")
+    }
+
+    suspend fun clearPlaylistCover(playlistId: Long) = playlistLock.withLock {
+        val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
+        playlistsDao.update(playlist.copy(coverPath = null))
+        if (playlist.coverPath != null) platform.deletePlaylistCover(playlist.coverPath)
+        message("Playlist cover removed")
+    }
+
+    suspend fun playPlaylist(playlistId: Long, shuffle: Boolean = false) {
+        check(playlistsDao.get(playlistId) != null) { "Playlist not found" }
+        val byId = tracksDao.observeAll().first().associateBy { it.id }
+        val songs = playlistsDao.itemsFor(playlistId).sortedBy { it.position }.mapNotNull { byId[it.trackId] }
+        if (songs.isEmpty()) {
+            message("This playlist has no available songs")
+            return
+        }
+        playAll(songs, shuffle)
+    }
+
+    suspend fun exportM3u(
+        playlistId: Long,
+        destination: String,
+        paths: M3uPathMode = M3uPathMode.Relative,
+        trackInfo: Boolean = true,
+    ) {
+        val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
+        val library = tracksDao.observeAll().first().associateBy { it.id }
+        val songs = playlistsDao.itemsFor(playlistId).sortedBy { it.position }.mapNotNull { library[it.trackId] }
+        val musicFolder = settings.filterNotNull().first().musicFolder
+        if (paths == M3uPathMode.Relative) requireNotNull(musicFolder) { "Choose a music folder before exporting relative paths" }
+        val entries = songs.map { song ->
+            M3uTrack(
+                fullPath = song.location,
+                relativePath = musicFolder?.let { platform.relativePlaylistPath(song, it) } ?: song.location,
+                title = song.displayTitle,
+                artist = song.artist,
+                durationMs = song.durationMs,
+            )
+        }
+        platform.writeExport(
+            destination,
+            M3u.format(entries, paths, trackInfo, playlist.name).encodeToByteArray(),
+        )
+        message("Exported ${playlist.name}")
+    }
+
+    suspend fun exportPlaylistBundle(
+        playlistId: Long,
+        destination: String,
+        includeLyrics: Boolean = true,
+    ) {
+        val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
+        val library = tracksDao.observeAll().first().associateBy { it.id }
+        val songs = playlistsDao.itemsFor(playlistId).sortedBy { it.position }.mapNotNull { library[it.trackId] }
+        platform.writePlaylistBundle(destination, playlist.name, songs, playlist.coverPath, songs.firstOrNull(), includeLyrics)
+        message("Exported ${playlist.name}")
+    }
+
+    suspend fun previewM3uImport(location: String): M3uImportPreview {
+        val source = platform.readPlaylistText(location)
+        val document = M3u.parse(source.text)
+        val musicFolder = settings.filterNotNull().first().musicFolder
+        val library = tracksDao.observeAll().first()
+        val items = document.entries.map { entry ->
+            val resolved = musicFolder?.let { platform.resolvePlaylistPath(entry.path, location, it) }
+            val track = M3u.match(listOf(entry), library) { resolved ?: entry.path }.matched.firstOrNull()?.track
+            M3uImportItem(entry, track)
+        }
+        val fallbackName = source.name.substringBeforeLast('.', source.name).trim().ifEmpty { "Imported Playlist" }
+        return M3uImportPreview(document.playlistName?.takeIf(String::isNotBlank) ?: fallbackName, items)
+    }
+
+    suspend fun previewPlaylistBundle(location: String): PlaylistBundlePreview =
+        platform.readPlaylistBundle(location, tracksDao.observeAll().first())
+
+    suspend fun importM3u(preview: M3uImportPreview, name: String = preview.name): PlaylistEntity = playlistLock.withLock {
+        val cleanName = name.trim()
+        require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
+        val uniqueName = uniquePlaylistName(cleanName)
+        val playlist = PlaylistEntity(name = uniqueName, createdMs = platform.currentTimeMs())
+        val tracksToAdd = preview.items.mapNotNull { it.track }.distinctBy { it.id }
+        val items = tracksToAdd.mapIndexed { index, track ->
+            PlaylistItemEntity(playlistId = 0, trackId = track.id, position = index)
+        }
+        val id = playlistsDao.insertWithItems(playlist, items)
+        message("Imported $uniqueName · ${tracksToAdd.size} songs")
+        playlist.copy(id = id)
+    }
+
+    suspend fun importPlaylistBundle(preview: PlaylistBundlePreview): PlaylistEntity = playlistLock.withLock {
+        var importFailure: Exception? = null
+        try {
+            val folder = settings.filterNotNull().first().musicFolder ?: throw IllegalStateException("Choose a music folder before importing a playlist")
+            val newSongs = preview.songs.filter { it.existingTrack == null }
+            val importedFiles = if (newSongs.isEmpty()) {
+                emptyList()
+            } else {
+                platform.importSongs(
+                    preview.name,
+                    folder,
+                    newSongs.map { PlaylistImportFile(it.sourcePath, it.fileName, it.lyricsPath) },
+                )
+            }
+            check(importedFiles.size == newSongs.size) { "Not all playlist songs were copied" }
+
+            if (newSongs.isNotEmpty()) {
+                scanJob?.join()
+                quietScan?.join()
+                saveLock.withLock { scanner.scan(platform.sourceFor(folder)) }
+            }
+            val library = tracksDao.observeAll().first()
+            val byId = library.associateBy { it.id }
+            val byLocation = library.associateBy { it.location }
+            val importedBySource = newSongs.zip(importedFiles).associate { (song, imported) -> song.sourcePath to imported }
+            val unresolvedNewSongs = newSongs.filter { song ->
+                val location = importedBySource[song.sourcePath]?.location
+                location == null || (location !in byLocation && song.tags?.let {
+                    matchTrackByTags(it.title, it.artist, it.durationMs, library)
+                } == null)
+            }
+            check(unresolvedNewSongs.isEmpty()) { "Some copied songs couldn't be added to the library" }
+            val trackIds = preview.songs.mapNotNull { song ->
+                song.existingTrack?.id?.takeIf { it in byId }
+                    ?: importedBySource[song.sourcePath]?.let { byLocation[it.location]?.id }
+                    ?: song.tags?.let { matchTrackByTags(it.title, it.artist, it.durationMs, library)?.id }
+            }.distinct()
+            val cleanName = preview.name.trim()
+            require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
+            val uniqueName = uniquePlaylistName(cleanName)
+            val playlist = PlaylistEntity(name = uniqueName, createdMs = platform.currentTimeMs())
+            val items = trackIds.mapIndexed { index, trackId ->
+                PlaylistItemEntity(playlistId = 0, trackId = trackId, position = index)
+            }
+            val id = playlistsDao.insertWithItems(playlist, items)
+            var coverPath: String? = null
+            try {
+                if (preview.coverBytes != null) {
+                    val extension = preview.coverExtension ?: throw IllegalArgumentException("Playlist bundle cover has no file extension")
+                    coverPath = platform.savePlaylistCover(id, extension, preview.coverBytes)
+                    playlistsDao.update(playlist.copy(id = id, coverPath = coverPath))
+                }
+            } catch (error: Exception) {
+                playlistsDao.delete(id)
+                if (coverPath != null) {
+                    try {
+                        platform.deletePlaylistCover(coverPath)
+                    } catch (cleanupError: Exception) {
+                        error.addSuppressed(cleanupError)
+                    }
+                }
+                throw error
+            }
+            message("Imported $uniqueName · ${trackIds.size} songs")
+            playlist.copy(id = id, coverPath = coverPath)
+        } catch (error: Exception) {
+            importFailure = error
+            throw error
+        } finally {
+            try {
+                platform.cleanupPlaylistBundlePreview(preview)
+            } catch (cleanupError: Exception) {
+                val failure = importFailure
+                if (failure == null) throw cleanupError
+                failure.addSuppressed(cleanupError)
+            }
+        }
+    }
+
+    private suspend fun uniquePlaylistName(name: String, exceptId: Long = -1): String {
+        if (playlistsDao.countNamed(name, exceptId) == 0) return name
+        var suffix = 2
+        while (playlistsDao.countNamed("$name ($suffix)", exceptId) > 0) suffix++
+        return "$name ($suffix)"
+    }
+
     /** The disc's play button: starts the library if nothing is queued yet. */
     fun togglePlay() {
         val s = player.state.value
@@ -455,5 +792,6 @@ class AppModel(
         const val RESUME_POSITION = "resumePosition"
         const val SAVE_POSITION_EVERY_MS = 5_000L
         const val WATCH_SETTLE_MS = 2_000L
+        val PLAYLIST_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png")
     }
 }

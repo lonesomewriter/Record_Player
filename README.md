@@ -22,6 +22,15 @@ No accounts, ads, analytics or network access.
   ```
 - **`gdbus` on Linux** (package `libglib2.0-bin`, usually preinstalled) lets Settings → Theme → System follow the desktop's dark/light setting. Without it, System uses Dark.
 
+## Playlist transfer formats
+
+The playlist data layer supports two offline export formats:
+
+- **M3U8** is a text playlist with relative or full paths and optional track information. Import matches library songs by path, then by title, artist and duration.
+- **`.rdplaylist`** is a standard ZIP containing a playlist, unchanged audio files, optional `.lrc` lyrics and a cover. Import checks archive paths and sizes before extracting, then copies new songs under `Music/Imported/<playlist>/`.
+
+The playlist screens and file pickers are still being built, so these formats are not yet available from the app UI.
+
 ## Common commands
 
 ```sh

@@ -8,6 +8,13 @@ import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.LyricLine
+import dev.recorddisc.player.library.M3u
+import dev.recorddisc.player.library.M3uPathMode
+import dev.recorddisc.player.library.PlaylistEntity
+import dev.recorddisc.player.library.PlaylistBundlePreview
+import dev.recorddisc.player.library.PlaylistBundlePreviewSong
+import dev.recorddisc.player.library.PlaylistImportFile
+import dev.recorddisc.player.library.PlaylistTextFile
 import dev.recorddisc.player.library.SettingEntity
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TrackEntity
@@ -32,7 +39,9 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -112,9 +121,14 @@ class AppModelTest {
 
     /** First run on /music in [file], ready to use. */
     private fun setUp(file: File, player: FakePlayer = FakePlayer(), platform: FakePlatform = FakePlatform()): AppModel {
-        val model = AppModel(database(file), player, platform, scope)
+        return readyModel(database(file), player, platform)
+    }
+
+    private fun readyModel(db: LibraryDatabase, player: FakePlayer, platform: FakePlatform): AppModel {
+        val model = AppModel(db, player, platform, scope)
         model.scan("/music")
         model.scan.await("scan done") { it is ScanState.Done }
+        model.tracks.await("initial tracks") { it.size == 3 }
         model.finishSetup()
         model.settings.await("setup done") { it?.setupDone == true }
         return model
@@ -371,6 +385,216 @@ class AppModelTest {
         val s = AppSettings.from(mapOf("accent" to "Plaid", "customAccent" to "zz", "setupDone" to "yes", "musicFolder" to " ", "theme" to "Sepia"))
         assertEquals(AppSettings(), s)
         assertEquals(0xFFABCDEF, AppSettings.from(mapOf("accent" to "Custom", "customAccent" to "abcdef")).accentArgb)
+    }
+
+    @Test
+    fun playlistsSupportUniqueNamesSongsOrderingCoversAndPlayback() = runBlocking {
+        val player = FakePlayer()
+        val db = database()
+        val platform = FakePlatform()
+        val model = readyModel(db, player, platform)
+        val songs = model.tracks.value
+        val playlist = model.createPlaylist(" Road Trip ")
+        val secondPlaylist = model.createPlaylist("road trip")
+
+        assertEquals("Road Trip", playlist.name)
+        assertEquals("road trip (2)", secondPlaylist.name)
+        assertTrue(model.addToPlaylist(playlist.id, songs[0].id))
+        assertTrue(model.addToPlaylist(playlist.id, songs[1].id))
+        assertTrue(model.addToPlaylist(playlist.id, songs[2].id))
+        assertFalse(model.addToPlaylist(playlist.id, songs[0].id))
+        assertTrue(model.movePlaylistTrack(playlist.id, songs[2].id, -1))
+        assertFalse(model.movePlaylistTrack(playlist.id, songs[0].id, -1))
+
+        var view = model.playlists.await("playlist songs") { it.firstOrNull { p -> p.id == playlist.id }?.songs?.size == 3 }
+            .first { it.id == playlist.id }
+        assertEquals(listOf(songs[0].id, songs[2].id, songs[1].id), view.songs.map { it.id })
+        assertEquals(600_000L, view.durationMs)
+        assertEquals(songs[0].id, view.fallbackCover?.id)
+
+        model.setPlaylistCover(playlist.id, "cover.png", byteArrayOf(1, 2, 3))
+        view = model.playlists.await("custom cover") { it.firstOrNull { p -> p.id == playlist.id }?.coverPath != null }
+            .first { it.id == playlist.id }
+        assertEquals("/private/playlist-covers/${playlist.id}.png", view.coverPath)
+        assertTrue(platform.playlistCovers.containsKey(view.coverPath))
+        model.clearPlaylistCover(playlist.id)
+        model.playlists.await("cover cleared") { it.firstOrNull { p -> p.id == playlist.id }?.coverPath == null }
+        assertTrue(platform.playlistCovers.isEmpty())
+
+        model.playPlaylist(playlist.id)
+        assertEquals(listOf(songs[0].id, songs[2].id, songs[1].id), player.queues.last().first.map { it.id })
+        assertTrue(model.removeFromPlaylist(playlist.id, songs[1].id))
+        assertFalse(model.removeFromPlaylist(playlist.id, songs[1].id))
+
+        model.deletePlaylist(playlist.id)
+        model.playlists.await("playlist deleted") { list -> list.none { it.id == playlist.id } }
+        assertTrue(db.playlists().itemsFor(playlist.id).isEmpty(), "playlist items cascade on delete")
+    }
+
+    @Test
+    fun playlistsKeepMissingTrackRowsButHideThemFromTheView() = runBlocking {
+        val platform = FakePlatform()
+        val db = database(File(tmp.root, "missing-playlist-track.db"))
+        val model = readyModel(db, FakePlayer(), platform)
+        val playlist = model.createPlaylist("Keep order")
+        val originalSongs = model.tracks.value
+        model.addToPlaylist(playlist.id, originalSongs[0].id)
+        model.addToPlaylist(playlist.id, originalSongs[1].id)
+        platform.folders["/music"] = platform.folders.getValue("/music").drop(1)
+
+        model.rescanNow()
+        withTimeout(5_000) {
+            model.playlists.first { views -> views.firstOrNull { it.id == playlist.id }?.songs?.size == 1 }
+        }
+
+        assertEquals(2, db.playlists().itemsFor(playlist.id).size)
+    }
+
+    @Test
+    fun m3uImportMatchesTagsAndExportUsesRelativePaths() = runBlocking {
+        val platform = FakePlatform().apply {
+            playlistFile = PlaylistTextFile(
+                "picked.m3u8",
+                "#EXTM3U\n#PLAYLIST:Mix Tape\n#EXTINF:200,Neon Coast - Midnight Drive\nnot-found.flac\nunmatched.flac\n",
+            )
+        }
+        val model = readyModel(database(), FakePlayer(), platform)
+
+        val preview = model.previewM3uImport("/picked.m3u8")
+        assertEquals("Mix Tape", preview.name)
+        assertEquals(1, preview.matchedCount)
+        assertEquals(1, preview.notFoundCount)
+        assertEquals("Midnight Drive", preview.items.first().track?.title)
+
+        val imported = model.importM3u(preview)
+        val view = model.playlists.await("M3U playlist") { playlists ->
+            playlists.firstOrNull { playlist -> playlist.id == imported.id }?.songs?.size == 1
+        }
+            .first { it.id == imported.id }
+        assertEquals(listOf("Midnight Drive"), view.songs.map { it.title })
+
+        model.exportM3u(imported.id, "/export.m3u8", M3uPathMode.Relative)
+        val exported = platform.exports.single()
+        assertEquals("/export.m3u8", exported.first)
+        val document = M3u.parse(exported.second.decodeToString())
+        assertEquals("Mix Tape", document.playlistName)
+        assertEquals(listOf("Midnight Drive.flac"), document.entries.map { it.path })
+    }
+
+    @Test
+    fun bundleImportCreatesPlaylistSavesCoverAndCleansPreviewFiles() = runBlocking {
+        val platform = FakePlatform()
+        val model = readyModel(database(), FakePlayer(), platform)
+        val track = model.tracks.value.first()
+        val previewDirectory = File(tmp.root, "bundle-preview").apply { mkdirs() }
+        val preview = PlaylistBundlePreview(
+            name = "Imported Mix",
+            songs = listOf(
+                PlaylistBundlePreviewSong(
+                    sourcePath = File(previewDirectory, "song.flac").absolutePath,
+                    fileName = "song.flac",
+                    lyricsPath = null,
+                    tags = TrackTags(title = track.title, artist = track.artist, durationMs = track.durationMs),
+                    existingTrack = track,
+                    warning = null,
+                ),
+            ),
+            coverBytes = byteArrayOf(1, 2, 3),
+            coverExtension = "png",
+            temporaryDirectory = previewDirectory.absolutePath,
+        )
+
+        val imported = model.importPlaylistBundle(preview)
+
+        val view = model.playlists.await("imported bundle playlist") { playlists ->
+            playlists.firstOrNull { it.id == imported.id }?.songs?.size == 1
+        }
+            .first { it.id == imported.id }
+        val coverPath = requireNotNull(imported.coverPath)
+        assertEquals(listOf(track.id), view.songs.map { it.id })
+        assertEquals("/private/playlist-covers/${imported.id}.png", coverPath)
+        assertContentEquals(byteArrayOf(1, 2, 3), requireNotNull(platform.playlistCovers[coverPath]))
+        assertEquals(listOf(previewDirectory.absolutePath), platform.cleanedBundleDirectories)
+        assertFalse(previewDirectory.exists())
+
+        model.deletePlaylist(imported.id)
+        model.playlists.await("imported playlist deleted") { playlists -> playlists.none { it.id == imported.id } }
+        assertTrue(platform.playlistCovers.isEmpty())
+    }
+
+    @Test
+    fun bundleImportCopiesNewSongsRescansAndAddsThemToThePlaylist() = runBlocking {
+        val platform = FakePlatform()
+        val model = readyModel(database(), FakePlayer(), platform)
+        val previewDirectory = File(tmp.root, "new-song-preview").apply { mkdirs() }
+        val audio = File(previewDirectory, "New Song.flac").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val lyrics = File(previewDirectory, "New Song.lrc").apply { writeText("[00:01.00]Line\n") }
+        platform.folders["/music"] = platform.folders.getValue("/music") + Triple("New Song", "New Artist", "New Album")
+        val preview = PlaylistBundlePreview(
+            name = "New Mix",
+            songs = listOf(
+                PlaylistBundlePreviewSong(
+                    sourcePath = audio.absolutePath,
+                    fileName = "New Song.flac",
+                    lyricsPath = lyrics.absolutePath,
+                    tags = TrackTags(title = "New Song", artist = "New Artist", durationMs = 200_000),
+                    existingTrack = null,
+                    warning = null,
+                ),
+            ),
+            coverBytes = null,
+            coverExtension = null,
+            temporaryDirectory = previewDirectory.absolutePath,
+        )
+
+        val imported = model.importPlaylistBundle(preview)
+
+        val view = model.playlists.await("new-song bundle playlist") { playlists ->
+            playlists.firstOrNull { it.id == imported.id }?.songs?.size == 1
+        }
+            .first { it.id == imported.id }
+        assertEquals(listOf("New Song"), view.songs.map { it.title })
+        assertEquals(listOf("New Mix"), platform.importedPlaylistNames)
+        assertEquals(listOf("/music"), platform.importedPlaylistFolders)
+        assertEquals(
+            listOf(PlaylistImportFile(audio.absolutePath, "New Song.flac", lyrics.absolutePath)),
+            platform.importedPlaylistRequests.single(),
+        )
+        assertFalse(previewDirectory.exists())
+    }
+
+    @Test
+    fun version3DatabasesUpgradeWithoutLosingTracksOrSettings() {
+        val file = File(tmp.root, "v3.db")
+        BundledSQLiteDriver().open(file.absolutePath).apply {
+            execSQL(
+                "CREATE TABLE IF NOT EXISTS `tracks` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `location` TEXT NOT NULL, " +
+                    "`fileName` TEXT NOT NULL, `format` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `modifiedMs` INTEGER NOT NULL, " +
+                    "`title` TEXT, `artist` TEXT, `album` TEXT, `albumArtist` TEXT, `year` INTEGER, `trackNumber` INTEGER, " +
+                    "`discNumber` INTEGER, `genre` TEXT, `durationMs` INTEGER, `hasArtwork` INTEGER NOT NULL, `tagsReadable` INTEGER NOT NULL, " +
+                    "`folder` TEXT, `lyricsLocation` TEXT)",
+            )
+            execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_tracks_location` ON `tracks` (`location`)")
+            execSQL("CREATE TABLE IF NOT EXISTS `settings` (`name` TEXT NOT NULL, `value` TEXT NOT NULL, PRIMARY KEY(`name`))")
+            execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+            execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'acc33e04fe05248e488f96ec13ab777a')")
+            execSQL(
+                "INSERT INTO tracks (location, fileName, format, sizeBytes, modifiedMs, title, hasArtwork, tagsReadable) " +
+                    "VALUES ('/music/a.flac', 'a.flac', 'flac', 1, 1, 'Kept', 0, 1)",
+            )
+            execSQL("INSERT INTO settings (name, value) VALUES ('accent', 'Rose')")
+            execSQL("PRAGMA user_version = 3")
+            close()
+        }
+
+        val db = database(file)
+        runBlocking {
+            assertEquals(listOf("Kept"), db.tracks().observeAll().first().map { it.title })
+            assertEquals(listOf("Rose"), db.settings().observeAll().first().map { it.value })
+            assertTrue(db.playlists().observeAll().first().isEmpty())
+            val id = db.playlists().insert(PlaylistEntity(name = "Imported", createdMs = 1))
+            assertEquals("Imported", db.playlists().get(id)!!.name)
+        }
     }
 
     /** Databases made by part 1 (version 1, no settings table) open and keep their tracks. */

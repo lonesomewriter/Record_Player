@@ -8,25 +8,37 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
+import android.util.AtomicFile
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.AudioFormats
+import dev.recorddisc.player.library.ImportedPlaylistSong
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.Lyrics
+import dev.recorddisc.player.library.M3u
+import dev.recorddisc.player.library.PlaylistImportFile
+import dev.recorddisc.player.library.PlaylistBundlePreview
+import dev.recorddisc.player.library.PlaylistBundlePreviewSong
+import dev.recorddisc.player.library.PlaylistTextFile
 import dev.recorddisc.player.library.SafFolderLibrarySource
 import dev.recorddisc.player.library.SavedFile
+import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TagSaveException
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.displayTitle
 import dev.recorddisc.player.tags.BackupThenOverwrite
 import dev.recorddisc.player.tags.DocumentStore
+import dev.recorddisc.player.tags.PlaylistBundle
+import dev.recorddisc.player.tags.PlaylistBundleSong
 import dev.recorddisc.player.tags.TagReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.tag.TagOptionSingleton
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 
 /**
@@ -37,6 +49,7 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
     private val context = context.applicationContext
 
     override val suggestedFolder: String? = null
+    override fun currentTimeMs(): Long = System.currentTimeMillis()
 
     private val saver = BackupThenOverwrite(SafDocuments(), File(context.filesDir, "tag-edit"))
 
@@ -147,6 +160,262 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
         created.toString()
     }
 
+    override suspend fun writeExport(destination: String, bytes: ByteArray) = withContext(Dispatchers.IO) {
+        val uri = Uri.parse(destination)
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "rwt")
+            ?: throw java.io.IOException("Couldn't open the export destination")
+        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+            output.write(bytes)
+            output.flush()
+            output.fd.sync()
+        }
+    }
+
+    override suspend fun writeExportFile(destination: String, sourcePath: String) = withContext(Dispatchers.IO) {
+        val source = File(sourcePath)
+        require(source.isFile) { "Export file can't be read" }
+        val descriptor = context.contentResolver.openFileDescriptor(Uri.parse(destination), "rwt")
+            ?: throw java.io.IOException("Couldn't open the export destination")
+        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+            output.flush()
+            output.fd.sync()
+        }
+    }
+
+    override suspend fun readPlaylistText(location: String): PlaylistTextFile = withContext(Dispatchers.IO) {
+        val uri = Uri.parse(location)
+        val name = context.contentResolver.query(uri, arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "playlist.m3u8"
+        val input = context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Couldn't read the playlist file")
+        val bytes = input.use { stream ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(32 * 1024)
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                require(output.size() + count <= M3u.MAX_IMPORT_BYTES) { "Playlist file is too large" }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+        PlaylistTextFile(name, bytes.decodeToString(throwOnInvalidSequence = true))
+    }
+
+    override suspend fun writePlaylistBundle(
+        destination: String,
+        name: String,
+        songs: List<TrackEntity>,
+        customCoverPath: String?,
+        fallbackCover: TrackEntity?,
+        includeLyrics: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        val transferRoot = playlistTransferDirectory().apply {
+            check(isDirectory || mkdirs()) { "Couldn't prepare playlist export storage" }
+        }
+        val temporaryDirectory = java.nio.file.Files.createTempDirectory(transferRoot.toPath(), "export-").toFile()
+        var exportFailure: Exception? = null
+        try {
+            val bundleSongs = songs.mapIndexed { index, track ->
+                val extension = AudioFormats.extensionOf(track.fileName)
+                val audioFile = File(temporaryDirectory, "song-$index.$extension")
+                copyDocumentToFile(track.location, audioFile, PlaylistBundle.MAX_ENTRY_BYTES)
+                val lyricsFile = track.lyricsLocation?.takeIf { includeLyrics }?.let { location ->
+                    File(temporaryDirectory, "lyrics-$index.lrc").also {
+                        copyDocumentToFile(location, it, PlaylistBundle.MAX_ENTRY_BYTES)
+                    }
+                }
+                PlaylistBundleSong(audioFile, track.displayTitle, track.artist, track.durationMs, lyricsFile, track.fileName)
+            }
+            val coverFile = customCoverPath?.let(::File) ?: fallbackCover?.takeIf { it.hasArtwork }?.let { track ->
+                val bytes = readEmbeddedArtwork(track.location) ?: return@let null
+                val extension = imageExtension(bytes) ?: throw java.io.IOException("The first song's cover isn't JPEG or PNG")
+                require(bytes.size <= TagRules.MAX_COVER_BYTES) { "Playlist cover is too large to export" }
+                File(temporaryDirectory, "cover.$extension").apply { writeBytes(bytes) }
+            }
+            if (customCoverPath != null) require(coverFile?.isFile == true) { "Playlist cover can't be read" }
+            val bundleFile = File(temporaryDirectory, "playlist.rdplaylist")
+            FileOutputStream(bundleFile).use { output ->
+                PlaylistBundle.write(output, name, bundleSongs, coverFile, includeLyrics)
+                output.flush()
+                output.fd.sync()
+            }
+            writeExportFile(destination, bundleFile.absolutePath)
+        } catch (error: Exception) {
+            exportFailure = error
+            throw error
+        } finally {
+            if (temporaryDirectory.exists() && !temporaryDirectory.deleteRecursively()) {
+                val cleanupError = java.io.IOException("Couldn't remove temporary playlist export files")
+                val failure = exportFailure
+                if (failure == null) throw cleanupError
+                failure.addSuppressed(cleanupError)
+            }
+        }
+    }
+
+    override suspend fun readPlaylistBundle(location: String, library: List<TrackEntity>): PlaylistBundlePreview =
+        withContext(Dispatchers.IO) {
+            val root = playlistImportDirectory().apply { check(isDirectory || mkdirs()) { "Couldn't prepare playlist import storage" } }
+            val input = context.contentResolver.openInputStream(Uri.parse(location))
+                ?: throw java.io.IOException("Couldn't read the playlist bundle")
+            val contents = input.use { PlaylistBundle.read(it, root) }
+            try {
+                val inspection = PlaylistBundle.inspect(contents, library)
+                val coverBytes = contents.coverFile?.readBytes()
+                PlaylistBundlePreview(
+                    name = contents.name,
+                    songs = inspection.map { item ->
+                        PlaylistBundlePreviewSong(
+                            sourcePath = item.song.file.absolutePath,
+                            fileName = item.song.file.name.substringAfter(" - "),
+                            lyricsPath = item.song.lyricsFile?.absolutePath,
+                            tags = item.tags,
+                            existingTrack = item.existingTrack,
+                            warning = item.warning,
+                        )
+                    },
+                    coverBytes = coverBytes,
+                    coverExtension = contents.coverFile?.extension?.lowercase(),
+                    temporaryDirectory = contents.temporaryDirectory.absolutePath,
+                )
+            } catch (error: Exception) {
+                if (contents.temporaryDirectory.exists() && !contents.temporaryDirectory.deleteRecursively()) {
+                    error.addSuppressed(java.io.IOException("Couldn't remove temporary playlist import files"))
+                }
+                throw error
+            }
+        }
+
+    override suspend fun cleanupPlaylistBundlePreview(preview: PlaylistBundlePreview) = withContext(Dispatchers.IO) {
+        cleanupPlaylistImportDirectory(preview.temporaryDirectory)
+    }
+
+    override suspend fun importSongs(
+        playlistName: String,
+        musicFolder: String,
+        files: List<PlaylistImportFile>,
+    ): List<ImportedPlaylistSong> = withContext(Dispatchers.IO) {
+        require(playlistName.isNotBlank()) { "Playlist name can't be empty" }
+        if (!canWriteFolder(musicFolder)) throw TagSaveException("Allow editing to add imported songs")
+        val tree = Uri.parse(musicFolder)
+        val treeRoot = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val imported = findOrCreateDirectory(treeRoot, IMPORTED_DIR)
+        val safeName = safeDirectoryName(playlistName)
+        val existingName = childDocuments(imported).firstOrNull { it.first == safeName }
+        val targetName = if (existingName == null || existingName.second == Document.MIME_TYPE_DIR) {
+            safeName
+        } else {
+            uniqueChildName(imported, safeName, isDirectory = true)
+        }
+        val target = findOrCreateDirectory(imported, targetName)
+        val created = ArrayList<Uri>()
+        try {
+            val usedNames = childNames(target).mapTo(HashSet()) { it.lowercase() }
+            val results = ArrayList<ImportedPlaylistSong>(files.size)
+            for (file in files) {
+                require(AudioFormats.isSupported(file.fileName)) { "Unsupported audio file: ${file.fileName}" }
+                val source = File(file.sourcePath)
+                require(source.isFile) { "Imported song can't be read: ${file.fileName}" }
+                val audioName = uniqueChildName(target, safeFileName(file.fileName), usedNames)
+                val audioUri = createImportedDocument(target, audioName)
+                created += audioUri
+                copyIntoDocument(source, audioUri)
+                val actualAudioName = documentName(audioUri) ?: audioName
+                usedNames += actualAudioName.lowercase()
+                val lyricsLocation = file.lyricsPath?.let { lyricsPath ->
+                    val lyrics = File(lyricsPath)
+                    require(lyrics.isFile && lyrics.extension.equals("lrc", ignoreCase = true)) {
+                        "Imported lyrics can't be read"
+                    }
+                    val lyricsName = uniqueChildName(target, actualAudioName.substringBeforeLast('.') + ".lrc", usedNames)
+                    val lyricsUri = createImportedDocument(target, lyricsName)
+                    created += lyricsUri
+                    copyIntoDocument(lyrics, lyricsUri)
+                    (documentName(lyricsUri) ?: lyricsName).also { usedNames += it.lowercase() }
+                    lyricsUri.toString()
+                }
+                results += ImportedPlaylistSong(audioUri.toString(), lyricsLocation)
+            }
+            results
+        } catch (error: Exception) {
+            created.forEach { uri ->
+                if (!DocumentsContract.deleteDocument(context.contentResolver, uri)) {
+                    error.addSuppressed(java.io.IOException("Couldn't remove a partially imported file"))
+                }
+            }
+            throw error
+        }
+    }
+
+    override fun relativePlaylistPath(track: TrackEntity, musicFolder: String): String {
+        val tree = Uri.parse(musicFolder)
+        val treeId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull() ?: return track.location
+        val documentId = runCatching { DocumentsContract.getDocumentId(Uri.parse(track.location)) }.getOrNull() ?: return track.location
+        val prefix = "$treeId/"
+        return documentId.removePrefix(prefix).takeIf { documentId.startsWith(prefix) } ?: track.location
+    }
+
+    override suspend fun resolvePlaylistPath(path: String, playlistLocation: String?, musicFolder: String): String? =
+        withContext(Dispatchers.IO) {
+            if (path.startsWith("content://")) return@withContext path
+            val tree = Uri.parse(musicFolder)
+            val treeId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull() ?: return@withContext null
+            val relative = path.replace('\\', '/')
+            val sourceBase = playlistLocation?.let { location ->
+                runCatching { DocumentsContract.getDocumentId(Uri.parse(location)) }.getOrNull()
+                    ?.substringBeforeLast('/', treeId)
+            }
+            val candidates = listOfNotNull(sourceBase, treeId).distinct().mapNotNull { base ->
+                resolveDocumentId(treeId, base, relative)?.let { documentId ->
+                    DocumentsContract.buildDocumentUriUsingTree(tree, documentId).toString()
+                }
+            }
+            candidates.firstOrNull { location ->
+                context.contentResolver.query(Uri.parse(location), arrayOf(Document.COLUMN_DOCUMENT_ID), null, null, null)?.use {
+                    it.moveToFirst()
+                } == true
+            }
+        }
+
+    override suspend fun savePlaylistCover(playlistId: Long, extension: String, bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        require(extension in PLAYLIST_COVER_EXTENSIONS && bytes.isNotEmpty() && bytes.size <= TagRules.MAX_COVER_BYTES) {
+            "Playlist cover must be a JPEG or PNG image, 10 MB or smaller"
+        }
+        val directory = playlistCoverDirectory().apply {
+            check(isDirectory || mkdirs()) { "Couldn't create playlist cover storage" }
+        }
+        val target = File(directory, "$playlistId.$extension")
+        val atomic = AtomicFile(target)
+        val output = atomic.startWrite()
+        try {
+            output.write(bytes)
+            output.fd.sync()
+            atomic.finishWrite(output)
+            target.absolutePath
+        } catch (error: Exception) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
+
+    override suspend fun deletePlaylistCover(path: String) = withContext(Dispatchers.IO) {
+        val file = playlistCoverFile(path)
+        if (file.exists() && !file.delete()) throw java.io.IOException("Couldn't remove the playlist cover")
+    }
+
+    override suspend fun loadPlaylistCover(path: String, maxSizePx: Int): ImageBitmap? = withContext(Dispatchers.IO) {
+        val file = playlistCoverFile(path)
+        if (!file.isFile) return@withContext null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSizePx) sample *= 2
+        BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+    }
+
     private fun writeDocument(uri: Uri, bytes: ByteArray) {
         val pfd = context.contentResolver.openFileDescriptor(uri, "rwt") ?: throw TagSaveException("Couldn't write the lyrics file")
         ParcelFileDescriptor.AutoCloseOutputStream(pfd).use { out ->
@@ -154,6 +423,138 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
             out.flush()
             out.fd.sync()
         }
+    }
+
+    private fun copyDocumentToFile(location: String, destination: File, maxBytes: Long) {
+        val input = context.contentResolver.openInputStream(Uri.parse(location))
+            ?: throw java.io.IOException("Couldn't read ${Uri.parse(location).lastPathSegment ?: "a song"}")
+        input.use { source ->
+            FileOutputStream(destination).use { output ->
+                val buffer = ByteArray(64 * 1024)
+                var copied = 0L
+                while (true) {
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    copied += count
+                    require(copied <= maxBytes) { "Playlist file is too large" }
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    private fun readEmbeddedArtwork(location: String): ByteArray? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            if (location.startsWith("content://")) retriever.setDataSource(context, Uri.parse(location)) else retriever.setDataSource(location)
+            retriever.embeddedPicture?.takeIf { it.size <= MAX_ARTWORK_BYTES }
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun canWriteFolder(folder: String): Boolean {
+        val location = Uri.parse(folder).toString()
+        return context.contentResolver.persistedUriPermissions.any {
+            it.isWritePermission && (location == it.uri.toString() || location.startsWith(it.uri.toString() + "/"))
+        }
+    }
+
+    private fun findOrCreateDirectory(parent: Uri, name: String): Uri {
+        val existing = childDocuments(parent).firstOrNull { (childName, mimeType, _) ->
+            childName == name && mimeType == Document.MIME_TYPE_DIR
+        }?.third
+        if (existing != null) return existing
+        return DocumentsContract.createDocument(context.contentResolver, parent, Document.MIME_TYPE_DIR, name)
+            ?: throw java.io.IOException("Couldn't create the $name folder")
+    }
+
+    private fun childDocuments(parent: Uri): List<Triple<String, String, Uri>> {
+        val documentId = DocumentsContract.getDocumentId(parent)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parent, documentId)
+        return context.contentResolver.query(
+            childrenUri,
+            arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val childId = cursor.getString(0)
+                    val name = cursor.getString(1) ?: continue
+                    val mimeType = cursor.getString(2) ?: continue
+                    add(Triple(name, mimeType, DocumentsContract.buildDocumentUriUsingTree(parent, childId)))
+                }
+            }
+        } ?: throw java.io.IOException("Couldn't list the music folder")
+    }
+
+    private fun childNames(parent: Uri): Set<String> = childDocuments(parent).mapTo(HashSet()) { it.first }
+
+    private fun uniqueChildName(parent: Uri, name: String, used: Set<String> = childNames(parent), isDirectory: Boolean = false): String {
+        val clean = if (isDirectory) safeDirectoryName(name) else safeFileName(name)
+        val usedLower = used.mapTo(HashSet()) { it.lowercase() }
+        if (clean.lowercase() !in usedLower) return clean
+        val base = if (isDirectory) clean else clean.substringBeforeLast('.', clean)
+        val extension = if (isDirectory) "" else clean.substringAfterLast('.', "").takeIf(String::isNotEmpty)?.let { ".$it" }.orEmpty()
+        var suffix = 2
+        var candidate: String
+        do {
+            candidate = "$base ($suffix)$extension"
+            suffix++
+        } while (candidate.lowercase() in usedLower)
+        return candidate
+    }
+
+    private fun createImportedDocument(parent: Uri, name: String): Uri =
+        DocumentsContract.createDocument(context.contentResolver, parent, "application/octet-stream", name)
+            ?: throw java.io.IOException("Couldn't create $name in the Imported folder")
+
+    private fun documentName(uri: Uri): String? =
+        context.contentResolver.query(uri, arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+
+    private fun copyIntoDocument(source: File, target: Uri) {
+        val descriptor = context.contentResolver.openFileDescriptor(target, "rwt")
+            ?: throw java.io.IOException("Couldn't write an imported file")
+        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+            output.flush()
+            output.fd.sync()
+        }
+    }
+
+    private fun safeDirectoryName(name: String): String =
+        name.replace(Regex("[\\\\/\\u0000-\\u001F]"), "_").replace("..", "_").trim()
+            .takeIf(String::isNotEmpty) ?: "Playlist"
+
+    private fun safeFileName(name: String): String {
+        val clean = name.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[\\u0000-\\u001F]"), "_")
+            .replace("..", "_")
+            .trim()
+        require(clean.isNotEmpty() && clean != "." && clean != "..") { "Invalid imported file name" }
+        return clean
+    }
+
+    private fun resolveDocumentId(treeId: String, baseId: String, relativePath: String): String? {
+        if (relativePath.isBlank() || relativePath.startsWith('/') || '\u0000' in relativePath) return null
+        val treeVolume = treeId.substringBefore(':')
+        val baseVolume = baseId.substringBefore(':')
+        if (treeVolume != baseVolume) return null
+        val rootParts = treeId.substringAfter(':').split('/').filter(String::isNotEmpty)
+        val baseParts = baseId.substringAfter(':').split('/').filter(String::isNotEmpty).toMutableList()
+        if (baseParts.take(rootParts.size) != rootParts || baseParts.size < rootParts.size) return null
+        relativePath.split('/').forEach { segment ->
+            when (segment) {
+                "", "." -> Unit
+                ".." -> if (baseParts.size > rootParts.size) baseParts.removeAt(baseParts.lastIndex) else return null
+                else -> baseParts += segment
+            }
+        }
+        return "$treeVolume:${baseParts.joinToString("/")}"
     }
 
     /** A document's size and last-modified time. */
@@ -209,8 +610,40 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
     }
 
+    private fun playlistCoverDirectory() = File(context.filesDir, "playlist-covers")
+
+    private fun playlistTransferDirectory() = File(context.cacheDir, "playlist-transfer")
+
+    private fun playlistImportDirectory() = File(context.cacheDir, "playlist-imports")
+
+    private fun cleanupPlaylistImportDirectory(path: String) {
+        val root = playlistImportDirectory().canonicalFile
+        val directory = File(path).canonicalFile
+        require(directory.parentFile == root && directory.name.startsWith("rdplaylist-")) {
+            "Invalid temporary playlist import directory"
+        }
+        if (directory.exists() && !directory.deleteRecursively()) throw java.io.IOException("Couldn't remove temporary playlist import files")
+    }
+
+    private fun imageExtension(bytes: ByteArray): String? = when {
+        bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "png"
+        bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "jpg"
+        else -> null
+    }
+
+    private fun playlistCoverFile(path: String): File {
+        val root = playlistCoverDirectory().canonicalFile
+        val file = File(path).canonicalFile
+        require(file.parentFile == root && file.name.matches(PLAYLIST_COVER_NAME)) { "Invalid playlist cover path" }
+        return file
+    }
+
     private companion object {
         const val MAX_ARTWORK_BYTES = 20 * 1024 * 1024
         const val MAX_LYRICS_COPY_BYTES = 200L * 1024 * 1024
+        val PLAYLIST_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png")
+        val PLAYLIST_COVER_NAME = Regex("""\d+\.(jpg|jpeg|png)""")
+        const val IMPORTED_DIR = "Imported"
     }
 }

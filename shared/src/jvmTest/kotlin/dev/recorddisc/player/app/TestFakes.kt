@@ -3,9 +3,13 @@ package dev.recorddisc.player.app
 import androidx.compose.ui.graphics.ImageBitmap
 import dev.recorddisc.player.library.EditSupport
 import dev.recorddisc.player.library.FileEntry
+import dev.recorddisc.player.library.ImportedPlaylistSong
 import dev.recorddisc.player.library.LibrarySource
 import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.Lyrics
+import dev.recorddisc.player.library.PlaylistBundlePreview
+import dev.recorddisc.player.library.PlaylistImportFile
+import dev.recorddisc.player.library.PlaylistTextFile
 import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TagSaveException
@@ -15,6 +19,7 @@ import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.QueueItem
 import dev.recorddisc.player.playback.RepeatMode
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Records what the app asks the player to do. */
@@ -71,7 +76,42 @@ internal open class FakePlatform : LibraryPlatform {
     }
     override val suggestedFolder = "/music"
     override fun folderLabel(folder: String) = folder
+    override fun currentTimeMs() = 1L
     override suspend fun loadArtwork(location: String, maxSizePx: Int): ImageBitmap? = null
+    var playlistFile = PlaylistTextFile("picked.m3u8", "#EXTM3U\n")
+    val exports = ArrayList<Pair<String, ByteArray>>()
+    val importedPlaylistNames = ArrayList<String>()
+    val importedPlaylistFolders = ArrayList<String>()
+    val importedPlaylistRequests = ArrayList<List<PlaylistImportFile>>()
+    override suspend fun readPlaylistText(location: String) = playlistFile
+    override suspend fun writeExport(destination: String, bytes: ByteArray) {
+        exports += destination to bytes.copyOf()
+    }
+    override suspend fun importSongs(
+        playlistName: String,
+        musicFolder: String,
+        files: List<PlaylistImportFile>,
+    ): List<ImportedPlaylistSong> {
+        importedPlaylistNames += playlistName
+        importedPlaylistFolders += musicFolder
+        importedPlaylistRequests += files
+        return files.map { file -> ImportedPlaylistSong("$musicFolder/${file.fileName}", null) }
+    }
+    override fun relativePlaylistPath(track: TrackEntity, musicFolder: String) = track.fileName
+    val playlistCovers = HashMap<String, ByteArray>()
+    val cleanedBundleDirectories = ArrayList<String>()
+    override suspend fun cleanupPlaylistBundlePreview(preview: PlaylistBundlePreview) {
+        cleanedBundleDirectories += preview.temporaryDirectory
+        val directory = File(preview.temporaryDirectory)
+        if (directory.exists() && !directory.deleteRecursively()) {
+            throw java.io.IOException("Couldn't remove the temporary playlist preview")
+        }
+    }
+    override suspend fun savePlaylistCover(playlistId: Long, extension: String, bytes: ByteArray): String =
+        "/private/playlist-covers/$playlistId.$extension".also { playlistCovers[it] = bytes.copyOf() }
+    override suspend fun deletePlaylistCover(path: String) {
+        playlistCovers.remove(path)
+    }
     /** Tag editing: what [editSupport] answers, whether saves rewrite in place, and a failure message to throw. */
     var support: EditSupport = EditSupport.Editable
     var inPlace = false
