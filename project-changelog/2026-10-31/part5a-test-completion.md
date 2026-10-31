@@ -10,7 +10,7 @@
   - Updated `project-notes/documents/programming_documentation.md` (new Lyrics section, settings, tests) and `feature_documentation.md` (Lyrics moved out of Planned; Android write-access note).
   - Pre-commit security scan of the changed/untracked files: no keys, tokens, passwords, private keys, PII, local paths or network URLs. No sensitive files tracked; `.gitignore` unchanged.
 - **Impacts:**
-  - Part 5a is ready for the PM's commit review. Nothing was committed or pushed.
+  - Part 5a was committed on `ui` as `6e17191` (2026-10-31 21:05 UTC). Not pushed.
   - No new dependencies, environment variables, secrets or PII.
   - The emulator was stopped after the run; no ports or processes left open.
 - **Performed By:** opencode (model: big-pickle)
