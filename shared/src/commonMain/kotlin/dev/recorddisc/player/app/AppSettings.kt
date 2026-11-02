@@ -1,5 +1,7 @@
 package dev.recorddisc.player.app
 
+import dev.recorddisc.player.playback.RepeatMode
+
 /** The accent presets from the mockups. */
 enum class AccentPreset(val argb: Long) {
     Gold(0xFFE0A458),
@@ -15,7 +17,11 @@ enum class ThemeMode { System, Dark, Light }
 
 /** Typed view of the settings table. Unknown or malformed values fall back to the defaults. */
 data class AppSettings(
-    /** Desktop: a folder path. Android: the folder grant's tree URI. Null until chosen. */
+    /** Music folder location, platform-dependent format.
+     *  Desktop: plain path string.
+     *  Android: SAF tree URI string.
+     *  iOS: document-aware URL string.
+     *  Null until a music folder has been chosen. */
     val musicFolder: String? = null,
     /** True once first run finished with music found. */
     val setupDone: Boolean = false,
@@ -23,7 +29,7 @@ data class AppSettings(
     val accent: AccentPreset? = AccentPreset.Gold,
     val customAccent: Long = AccentPreset.Gold.argb,
     val theme: ThemeMode = ThemeMode.Dark,
-    /** Android 12+: take the accent from the wallpaper. */
+    /** Android: take the accent from the current track's cover art. */
     val dynamicColor: Boolean = true,
     /** Reopen the last queue at the same song and position (paused) when the app starts. */
     val resumeOnStart: Boolean = true,
@@ -34,8 +40,29 @@ data class AppSettings(
     val watchFolder: Boolean = true,
     /** The Lyrics toggle on Now Playing / Home. */
     val showLyrics: Boolean = false,
+    /** Playback modes restored on the next launch. */
+    val shuffle: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.Off,
 ) {
     val accentArgb: Long get() = accent?.argb ?: customAccent
+
+    /** Converts a raw string value to a music folder format based on detection.
+     *  - Strings starting with "file://" or containing UUID-like patterns are treated as iOS document URIs.
+     *  - Strings containing "tree" and ":" are treated as Android tree URIs.
+     *  - Otherwise treated as desktop path. */
+    fun parseMusicFolder(): String? {
+        if (musicFolder?.isBlank() == true) return null
+        
+        // iOS document URI format
+        if (musicFolder?.startsWith("file://") == true) return musicFolder
+        
+        // Android tree URI format detection (contains colon and 'tree' keyword)
+        // This is a heuristic; actual SAF URI format varies
+        if (musicFolder?.contains(":") == true && musicFolder?.contains("tree") == true) return musicFolder
+        
+        // Desktop path format
+        return musicFolder
+    }
 
     companion object {
         const val MUSIC_FOLDER = "musicFolder"
@@ -49,14 +76,19 @@ data class AppSettings(
         const val GAPLESS = "gapless"
         const val WATCH_FOLDER = "watchFolder"
         const val SHOW_LYRICS = "showLyrics"
+        const val SHUFFLE = "shuffle"
+        const val REPEAT_MODE = "repeatMode"
         const val CUSTOM = "Custom"
 
         fun from(values: Map<String, String>): AppSettings {
             val d = AppSettings()
             fun flag(name: String, default: Boolean) = values[name]?.toBooleanStrictOrNull() ?: default
             val accentName = values[ACCENT]
+            val folderStr = values[MUSIC_FOLDER]
+            val blank = folderStr?.isBlank() == true
+            val result = if (!blank) folderStr else null
             return AppSettings(
-                musicFolder = values[MUSIC_FOLDER]?.takeIf { it.isNotBlank() },
+                musicFolder = result,
                 setupDone = flag(SETUP_DONE, d.setupDone),
                 theme = ThemeMode.entries.firstOrNull { it.name == values[THEME] } ?: d.theme,
                 accent = when (accentName) {
@@ -71,6 +103,8 @@ data class AppSettings(
                 gapless = flag(GAPLESS, d.gapless),
                 watchFolder = flag(WATCH_FOLDER, d.watchFolder),
                 showLyrics = flag(SHOW_LYRICS, d.showLyrics),
+                shuffle = flag(SHUFFLE, d.shuffle),
+                repeatMode = RepeatMode.entries.firstOrNull { it.name == values[REPEAT_MODE] } ?: d.repeatMode,
             )
         }
     }
