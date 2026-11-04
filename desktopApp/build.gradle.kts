@@ -18,6 +18,7 @@ dependencies {
 
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutinesSwing)
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
     implementation(libs.compose.uiToolingPreview)
 }
 
@@ -29,8 +30,11 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.Rpm)
-            packageName = "record-disc"
+            packageName = "record-player"
             packageVersion = "0.1.0"
+            linux {
+                iconFile.set(project.file("src/main/resources/record-player.png"))
+            }
         }
     }
 }
