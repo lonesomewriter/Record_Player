@@ -29,7 +29,8 @@ compose.desktop {
         jvmArgs += "--enable-native-access=ALL-UNNAMED"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Deb, TargetFormat.Rpm)
+            // .deb only: .rpm was dropped (project manager, 2026-11-04).
+            targetFormats(TargetFormat.Deb)
             packageName = "record-player"
             packageVersion = "0.1.0"
             linux {
@@ -38,3 +39,12 @@ compose.desktop {
         }
     }
 }
+
+// Playback uses the system's GStreamer (it isn't bundled), so the .deb must declare it.
+// Without this, the package installs fine but can't play anything on a machine that lacks GStreamer.
+// The Compose DSL has no setting for this, so pass jpackage's own option to the .deb tasks.
+// No spaces: Compose writes jpackage's arguments to a file unquoted, so a space would split the list.
+val gstreamerDebDepends = "libgstreamer1.0-0,gstreamer1.0-plugins-base,gstreamer1.0-plugins-good"
+tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>()
+    .matching { it.name == "packageDeb" || it.name == "packageReleaseDeb" }
+    .configureEach { freeArgs.addAll("--linux-package-deps", gstreamerDebDepends) }

@@ -44,8 +44,23 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    // Release signing uses a keystore kept on the developer's own machine, never in the repo.
+    // scripts/build.sh reads these from the gitignored .env (see .env_example) and refuses a
+    // release build when they're missing. Without them, a release APK is left unsigned.
+    val keystorePath = providers.environmentVariable("RECORDPLAYER_KEYSTORE_PATH").orNull
+    signingConfigs {
+        if (!keystorePath.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = providers.environmentVariable("RECORDPLAYER_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("RECORDPLAYER_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("RECORDPLAYER_KEY_PASSWORD").orNull
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
