@@ -31,6 +31,25 @@ import kotlinx.coroutines.launch
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private object Callback : MediaSession.Callback {
+        override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
+            if (controller.isTrusted) super.onConnect(session, controller) else MediaSession.ConnectionResult.reject()
+
+        override fun onAddMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+        ): ListenableFuture<MutableList<MediaItem>> {
+            val resolved = mediaItems.map { item ->
+                val uri = item.requestMetadata.mediaUri
+                if (uri == null || uri.scheme !in LOCAL_SCHEMES) {
+                    return Futures.immediateFailedFuture(IllegalArgumentException("Not a local file: $uri"))
+                }
+                item.buildUpon().setUri(uri).build()
+            }
+            return Futures.immediateFuture(resolved.toMutableList())
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -54,9 +73,11 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, CurrentFirstShuffle(exo)).setCallback(Callback).setSessionActivity(open).build()
+        val app = application as RecordDiscApplication
+        app.startPlaybackWidgetUpdates()
         // Settings → "Pause on headphone unplug".
         scope.launch {
-            (application as RecordDiscApplication).model.settings.filterNotNull().map { it.pauseOnUnplug }.distinctUntilChanged()
+            app.model.settings.filterNotNull().map { it.pauseOnUnplug }.distinctUntilChanged()
                 .collect { exo.setHandleAudioBecomingNoisy(it) }
         }
     }
@@ -71,31 +92,6 @@ class PlaybackService : MediaSessionService() {
         }
         session = null
         super.onDestroy()
-    }
-
-    private object Callback : MediaSession.Callback {
-        /** Only this app, the system (notification, lock screen, Bluetooth) and apps the user allowed as media controllers. */
-        override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
-            if (controller.isTrusted) super.onConnect(session, controller) else MediaSession.ConnectionResult.reject()
-
-        /**
-         * Media3 strips URIs from items sent by controllers, so rebuild them from the request metadata.
-         * Only local files and documents are accepted.
-         */
-        override fun onAddMediaItems(
-            mediaSession: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> {
-            val resolved = mediaItems.map { item ->
-                val uri = item.requestMetadata.mediaUri
-                if (uri == null || uri.scheme !in LOCAL_SCHEMES) {
-                    return Futures.immediateFailedFuture(IllegalArgumentException("Not a local file: $uri"))
-                }
-                item.buildUpon().setUri(uri).build()
-            }
-            return Futures.immediateFuture(resolved.toMutableList())
-        }
     }
 
     /** Like the desktop player: turning shuffle on keeps the current song and shuffles the rest after it. */
@@ -124,7 +120,7 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private companion object {
+    companion object {
         val LOCAL_SCHEMES = setOf("content", "file")
     }
 }

@@ -6,7 +6,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -18,9 +17,6 @@ actual fun rememberReduceMotion(): Boolean = false
 
 @Composable
 actual fun PlatformBackHandler(enabled: Boolean, onBack: () -> Unit) = Unit
-
-@Composable
-actual fun dynamicAccentColor(): Color? = null
 
 /** Linux: the desktop's dark/light setting, read at start and again when the window gains or loses focus. */
 @Composable
@@ -51,3 +47,11 @@ actual fun decodeImage(bytes: ByteArray, maxSizePx: Int): ImageBitmap? = runCatc
         }
     }
 }.getOrNull()
+
+@Composable
+actual fun viewFileLocation(location: String, folder: String?) {
+    val dir = java.io.File(folder ?: location).parentFile
+    if (dir != null && dir.exists()) {
+        java.awt.Desktop.getDesktop().open(dir)
+    }
+}

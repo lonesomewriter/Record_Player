@@ -9,6 +9,7 @@ import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.library.TrackTags
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import kotlinx.coroutines.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -116,6 +117,42 @@ class PlaylistBundleTest {
                 ByteArrayInputStream(output.toByteArray()),
                 temporary.newFolder("extract-total"),
                 PlaylistBundle.Limits(maxEntryBytes = 1_000, maxTotalBytes = 8, maxPlaylistBytes = 1_000),
+            )
+        }
+    }
+
+    @Test
+    fun reportsMonotonicByteProgressThroughPackaging() {
+        val source = temporary.newFolder("progress-source")
+        val audio = File(source, "song.flac").apply { writeBytes(ByteArray(96 * 1024) { it.toByte() }) }
+        val output = ByteArrayOutputStream()
+        val progress = ArrayList<Pair<Long, Long>>()
+
+        PlaylistBundle.write(
+            output,
+            "Progress",
+            listOf(PlaylistBundleSong(audio, "Song", "Artist", 123_000)),
+            onProgress = { completed, total -> progress += completed to total },
+        )
+
+        assertTrue(progress.isNotEmpty())
+        assertTrue(progress.zipWithNext().all { (before, after) -> after.first >= before.first && after.second == before.second })
+        assertEquals(progress.last().second, progress.last().first)
+    }
+
+    @Test
+    fun checksCancellationBetweenPackagingChunks() {
+        val source = temporary.newFolder("cancel-source")
+        val audio = File(source, "song.flac").apply { writeBytes(ByteArray(256 * 1024) { it.toByte() }) }
+        var cancel = false
+
+        assertFailsWith<CancellationException> {
+            PlaylistBundle.write(
+                ByteArrayOutputStream(),
+                "Cancel",
+                listOf(PlaylistBundleSong(audio, "Song", "Artist", 123_000)),
+                onProgress = { completed, _ -> if (completed > 0) cancel = true },
+                checkActive = { if (cancel) throw CancellationException("Canceled by test") },
             )
         }
     }

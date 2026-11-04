@@ -273,7 +273,7 @@ internal fun ColumnScope.EditNotice(
     support: EditSupport?,
     actions: EditorActions,
     readOnlyTitle: String = "This file can't be changed",
-    allowText: String = "To change song files, allow Record Disc to edit your music folder. You'll choose the same folder again.",
+    allowText: String = "To change song files, allow Record Player to edit your music folder. You'll choose the same folder again.",
 ) {
     if (support == null || support == EditSupport.Editable) return
     val shape = RoundedCornerShape(12.dp)

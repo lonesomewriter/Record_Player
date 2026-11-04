@@ -6,10 +6,12 @@ import java.io.File
 import java.nio.file.Files
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -126,5 +128,53 @@ class DesktopPlaylistFilesTest {
             platform.cleanupPlaylistBundlePreview(preview)
         }
         assertFalse(temporaryDirectory.exists())
+    }
+
+    @Test
+    fun canceledBundleExportPreservesAnExistingDestination() = runBlocking {
+        val dataDirectory = File(temporary.root, "cancel-app-data")
+        val platform = DesktopLibraryPlatform(dataDirectory)
+        val audio = File(temporary.root, "cancel-song.flac").apply { writeBytes(ByteArray(256 * 1024) { it.toByte() }) }
+        val destination = File(temporary.root, "existing.rdplaylist").apply { writeBytes("previous contents".encodeToByteArray()) }
+        val original = destination.readBytes()
+        val track = TrackEntity(
+            id = 1,
+            location = audio.absolutePath,
+            fileName = audio.name,
+            format = "flac",
+            sizeBytes = audio.length(),
+            modifiedMs = 1,
+            title = "Song",
+            artist = "Artist",
+            album = null,
+            albumArtist = null,
+            year = null,
+            trackNumber = null,
+            discNumber = null,
+            genre = null,
+            durationMs = 123_000,
+            hasArtwork = false,
+            tagsReadable = true,
+        )
+
+        assertFailsWith<CancellationException> {
+            platform.writePlaylistBundle(
+                destination.absolutePath,
+                "Cancel",
+                listOf(track),
+                customCoverPath = null,
+                fallbackCover = null,
+                includeLyrics = false,
+                onProgress = { progress ->
+                    if (progress.stage == PlaylistBundleExportStage.Saving && progress.completedBytes > 0) {
+                        throw CancellationException("Canceled by test")
+                    }
+                },
+            )
+        }
+
+        assertContentEquals(original, destination.readBytes())
+        assertTrue(temporary.root.listFiles().orEmpty().none { it.name.endsWith(".tmp") })
+        assertTrue(dataDirectory.resolve("playlist-transfer").listFiles().orEmpty().isEmpty())
     }
 }

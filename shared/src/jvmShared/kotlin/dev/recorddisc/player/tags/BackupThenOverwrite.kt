@@ -109,7 +109,7 @@ class BackupThenOverwrite(
                 clearNote()
                 backup.delete()
                 "A song's details weren't saved because the app closed; the original file was put back"
-            }.getOrElse { "Couldn't put back a song after an interrupted save; Record Disc will try again next time" }
+            }.getOrElse { "Couldn't put back a song after an interrupted save; Record Player will try again next time" }
             else -> {
                 clearNote()
                 null

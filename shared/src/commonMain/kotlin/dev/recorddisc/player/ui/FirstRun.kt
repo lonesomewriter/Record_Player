@@ -77,7 +77,7 @@ fun PhoneWelcome(
             when (step) {
                 Step.Intro -> {
                     Heading("Let's find your music", 22.sp)
-                    Body("Choose the folder where your songs live. Record Disc plays them from there.")
+                    Body("Choose the folder where your songs live. Record Player plays them from there.")
                     Promises(
                         "It can only see the folder you choose",
                         "No account, no internet, nothing uploaded",
@@ -142,7 +142,7 @@ fun DesktopWelcome(
             Step.Intro -> {
                 Eyebrow("Welcome")
                 Heading("Let's find your music", 40.sp, TextAlign.Start)
-                Body("Record Disc plays the music already on this computer, straight from your music folder.", TextAlign.Start)
+                Body("Record Player plays the music already on this computer, straight from your music folder.", TextAlign.Start)
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(disc.soft)
                         .border(1.dp, disc.accent.copy(alpha = 0.28f), RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 14.dp),
@@ -278,7 +278,7 @@ fun PhoneTopRow() {
     }
 }
 
-/** The desktop brand: a small record with the accent label, "Record Disc / Desktop player". */
+/** The desktop brand: a small record with the accent label, "Record Player / Desktop player". */
 @Composable
 fun BrandRow(modifier: Modifier = Modifier, showSub: Boolean = true, markSize: Dp = 34.dp) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

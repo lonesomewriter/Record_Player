@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -64,6 +66,7 @@ import dev.recorddisc.player.library.LyricLine
 import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.playback.PlaybackState
+import dev.recorddisc.player.playback.RepeatMode
 import kotlinx.coroutines.launch
 
 /** One editable row: a stable [key] for the list, and the line's time and text. */
@@ -145,6 +148,11 @@ private fun rememberDraft(model: AppModel, track: TrackEntity, state: PlaybackSt
     val draft = remember(track.id) { LyricsDraft(track) }
     val lyrics by rememberLyrics(model, track)
     val access by model.accessRevision.collectAsState()
+    DisposableEffect(model.player) {
+        val previousRepeatMode = state.repeatMode
+        model.player.setRepeatMode(RepeatMode.One)
+        onDispose { model.player.setRepeatMode(previousRepeatMode) }
+    }
     LaunchedEffect(track.id, access) { draft.support = model.lyricsSupport(track) }
     LaunchedEffect(track.id) {
         // Lyrics read so far (null until known): the editor fills once, then keeps the user's edits.
@@ -195,7 +203,7 @@ fun BoxScope.PhoneLyricsEditor(model: AppModel, track: TrackEntity, state: Playb
         ModeSwitch(draft, Modifier.padding(top = 12.dp))
         Transport(model, track, state, position, Modifier.padding(top = 12.dp))
         Column(Modifier.padding(top = 12.dp)) {
-            EditNotice(draft.support, actions, "Lyrics can't be saved here", "To save lyrics, allow Record Disc to edit your music folder. You'll choose the same folder again.")
+            EditNotice(draft.support, actions, "Lyrics can't be saved here", "To save lyrics, allow Record Player to edit your music folder. You'll choose the same folder again.")
             ErrorBox(draft.error)
         }
         Box(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp)) { Lines(draft, model, isCurrent, compact = false) }
@@ -304,7 +312,7 @@ private fun ModeSwitch(draft: LyricsDraft, modifier: Modifier = Modifier) {
     }
 }
 
-/** Play/pause for the song being edited (starting it if another song is current), its time, and a seek bar. */
+/** Play/pause for the current song, its time, and a seek bar. */
 @Composable
 private fun Transport(model: AppModel, track: TrackEntity, state: PlaybackState, position: Long, modifier: Modifier = Modifier) {
     val isCurrent = state.current?.id == track.id
@@ -359,9 +367,9 @@ private fun Lines(draft: LyricsDraft, model: AppModel, isCurrent: Boolean, compa
             val selected = i == draft.selected
             val rowShape = RoundedCornerShape(12.dp)
             Row(
-                Modifier.fillMaxWidth().clip(rowShape).background(if (selected) disc.soft else disc.tint.copy(alpha = 0f))
+                Modifier.fillMaxWidth().background(if (selected) disc.soft else disc.tint.copy(alpha = 0f))
                     .border(1.dp, if (selected) disc.accent.copy(alpha = 0.45f) else disc.line, rowShape)
-                    .clickable { draft.selected = i }.padding(horizontal = 6.dp, vertical = 5.dp),
+                    .clip(rowShape).clickable { draft.selected = i }.padding(horizontal = 6.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 val time = row.timeMs
@@ -375,9 +383,10 @@ private fun Lines(draft: LyricsDraft, model: AppModel, isCurrent: Boolean, compa
                     color = if (time == null) disc.muted else disc.accentReadable, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                 )
                 BasicTextField(
-                    row.text, { draft.edit(i, it) },
-                    Modifier.weight(1f).semantics { contentDescription = "Lyric line ${i + 1}" },
-                    enabled = !draft.locked, singleLine = true,
+                    row.text, { draft.edit(i, it.replace('\n', ' ').replace('\r', ' ')) },
+                    Modifier.weight(1f).onFocusChanged { if (it.isFocused) draft.selected = i }
+                        .semantics { contentDescription = "Lyric line ${i + 1}" },
+                    enabled = !draft.locked,
                     textStyle = TextStyle(color = disc.text, fontSize = 13.sp),
                     cursorBrush = SolidColor(disc.accentReadable),
                     decorationBox = { inner ->

@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,71 +58,173 @@ import androidx.compose.ui.unit.sp
 import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.app.ScanState
 import dev.recorddisc.player.app.rememberArtwork
+import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.RepeatMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.merge
 
-enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, EditTags, EditLyrics }
+enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, Inbox, EditTags, EditLyrics }
 
-private const val SOON = "Coming in a later update"
+internal fun phoneSwipeDestination(
+    screen: PhoneScreen,
+    swipeRight: Boolean,
+    nowPlayingReturn: PhoneScreen = PhoneScreen.Home,
+): PhoneScreen? = when (screen) {
+    PhoneScreen.Home -> if (swipeRight) PhoneScreen.Library else null
+    PhoneScreen.Library -> if (swipeRight) PhoneScreen.Playlists else PhoneScreen.Home
+    PhoneScreen.Playlists -> if (swipeRight) PhoneScreen.Settings else PhoneScreen.Library
+    PhoneScreen.Settings -> if (swipeRight) PhoneScreen.Inbox else PhoneScreen.Playlists
+    PhoneScreen.Inbox -> if (swipeRight) null else PhoneScreen.Settings
+    PhoneScreen.NowPlaying -> if (swipeRight) null else nowPlayingReturn.takeIf { it in setOf(PhoneScreen.Library, PhoneScreen.Playlists) } ?: PhoneScreen.Home
+    PhoneScreen.EditTags, PhoneScreen.EditLyrics -> null
+}
 
 /** The Android layout: the disc is home; Library, Playlists and Settings sit on its arc. */
 @Composable
-fun PhoneApp(model: AppModel, onChooseFolder: () -> Unit, openRequests: Flow<PhoneScreen> = emptyFlow(), editor: EditorActions = EditorActions()) {
+fun PhoneApp(
+    model: AppModel,
+    onChooseFolder: () -> Unit,
+    openRequests: Flow<PhoneScreen> = emptyFlow(),
+    editor: EditorActions = EditorActions(),
+    playlistActions: PlaylistFileActions = PlaylistFileActions(),
+) {
     val settings = model.settings.collectAsState().value
-    val dynamic = dynamicAccentColor()
-    val accent = if (settings?.dynamicColor == true && dynamic != null) dynamic else Color(settings?.accentArgb ?: 0xFFE0A458)
+    val state by model.player.state.collectAsState()
+    val toastMessages = remember(model) {
+        merge(
+            model.messages,
+            model.player.state.mapNotNull { it.error }.distinctUntilChanged(),
+        )
+    }
+    val artworkRevision by model.artwork.revision.collectAsState()
+    val currentLocation = state.current?.location
+    val coverAccent by produceState<Color?>(null, settings?.dynamicColor, currentLocation, artworkRevision) {
+        value = null
+        if (settings?.dynamicColor == true && currentLocation != null) {
+            value = model.artwork.get(currentLocation, maxSizePx = 64)?.let(::representativeCoverAccent)
+        }
+    }
+    val accent = if (settings?.dynamicColor == true) {
+        coverAccent ?: Color(settings.accentArgb)
+    } else {
+        Color(settings?.accentArgb ?: 0xFFE0A458)
+    }
     val light = settings?.useLightTheme() == true
     SystemBarsEffect(light)
     DiscTheme(accent, light) {
         Box(Modifier.fillMaxSize().background(disc.panel).safeDrawingPadding()) {
             if (settings == null) return@Box
-            val state by model.player.state.collectAsState()
             val scan by model.scan.collectAsState()
             val spin = rememberDiscSpin(state.isPlaying || scan is ScanState.Running, periodMs = 14_000f)
             if (!settings.setupDone) {
                 PhoneWelcome(scan, spin, model.platform::folderLabel, onChooseFolder, model::cancelScan) { model.finishSetup() }
             } else {
-                PhoneScreens(model, state, spin, openRequests, onChooseFolder, editor)
+                PhoneScreens(model, state, spin, openRequests, onChooseFolder, editor, playlistActions)
             }
-            MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
+            MessageToast(toastMessages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
         }
     }
 }
 
 @Composable
 private fun BoxScope.PhoneScreens(
-    model: AppModel, state: PlaybackState, spin: DiscSpin, openRequests: Flow<PhoneScreen>, onChooseFolder: () -> Unit, editor: EditorActions,
+    model: AppModel,
+    state: PlaybackState,
+    spin: DiscSpin,
+    openRequests: Flow<PhoneScreen>,
+    onChooseFolder: () -> Unit,
+    editor: EditorActions,
+    playlistActions: PlaylistFileActions,
 ) {
     var screen by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var nowPlayingReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var inboxReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
     var picking by rememberSaveable { mutableStateOf(false) }
+    var progressDialogTaskId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var hiddenProgressTaskId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var observedProgressTaskId by rememberSaveable { mutableStateOf<Long?>(null) }
     // The song being edited, and the screen the editor goes back to.
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     var editReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
     var lyricsId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val exportTask by model.playlistBundleExportTask.collectAsState()
     val closeEditor = { screen = editReturn }
-    // e.g. the playback notification was tapped: show Now Playing.
-    LaunchedEffect(openRequests) { openRequests.collect { screen = it } }
+    fun openNowPlaying(returnTo: PhoneScreen) {
+        nowPlayingReturn = returnTo.takeIf { it == PhoneScreen.Library || it == PhoneScreen.Playlists } ?: PhoneScreen.Home
+        screen = PhoneScreen.NowPlaying
+    }
+    fun openScreen(destination: PhoneScreen) {
+        when (destination) {
+            PhoneScreen.NowPlaying -> openNowPlaying(PhoneScreen.Home)
+            PhoneScreen.Inbox -> { inboxReturn = screen; screen = PhoneScreen.Inbox }
+            else -> screen = destination
+        }
+    }
+    // Notification taps always have Home as their return destination.
+    LaunchedEffect(openRequests) {
+        openRequests.collect {
+            when (it) {
+                PhoneScreen.NowPlaying -> openNowPlaying(PhoneScreen.Home)
+                PhoneScreen.Inbox -> { inboxReturn = PhoneScreen.Home; screen = PhoneScreen.Inbox }
+                else -> screen = it
+            }
+        }
+    }
+    LaunchedEffect(exportTask?.id) {
+        exportTask?.takeIf {
+            it.status == dev.recorddisc.player.app.PlaylistBundleExportStatus.Running && it.id != observedProgressTaskId
+        }?.let {
+            observedProgressTaskId = it.id
+            progressDialogTaskId = it.id
+            hiddenProgressTaskId = null
+        }
+    }
     // The lyrics editor handles Back itself (it asks before discarding changes).
-    PlatformBackHandler(enabled = screen != PhoneScreen.Home && screen != PhoneScreen.EditLyrics) { if (screen == PhoneScreen.EditTags) closeEditor() else screen = PhoneScreen.Home }
+    PlatformBackHandler(enabled = screen != PhoneScreen.Home && screen != PhoneScreen.EditLyrics) {
+        when (screen) {
+            PhoneScreen.EditTags -> closeEditor()
+            PhoneScreen.NowPlaying -> screen = nowPlayingReturn
+            PhoneScreen.Inbox -> screen = inboxReturn
+            else -> screen = PhoneScreen.Home
+        }
+    }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
     val tracks = rememberTrackIndex(model)
+    PlaylistHost(model) {
     androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t -> lyricsId = t.id; editReturn = screen; screen = PhoneScreen.EditLyrics }) {
     ProvideEditSong({ t -> editingId = t.id; editReturn = screen; screen = PhoneScreen.EditTags }) {
         AnimatedContent(
             screen,
             transitionSpec = { (fadeIn() + slideInHorizontally { it / 12 }) togetherWith fadeOut() },
             modifier = Modifier.fillMaxSize()
-                // Swipe left to go back to the disc (not from the editor, where it would lose typed changes).
-                .swipeLeft { if (screen !in setOf(PhoneScreen.Home, PhoneScreen.EditTags, PhoneScreen.EditLyrics)) screen = PhoneScreen.Home },
+                .swipeHorizontally { swipeRight ->
+                    phoneSwipeDestination(screen, swipeRight, nowPlayingReturn)?.let {
+                        if (it == PhoneScreen.Inbox) inboxReturn = screen
+                        screen = it
+                    }
+                },
         ) { shown ->
             when (shown) {
-                PhoneScreen.Home -> PhoneHome(spin, art) { screen = it }
-                PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = PhoneScreen.Home })
-                PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { screen = PhoneScreen.NowPlaying })
-                PhoneScreen.Playlists -> Placeholder("Playlists", "Playlists are coming in a later update.", soon = true) { screen = PhoneScreen.Home }
+                PhoneScreen.Home -> PhoneHome(spin, art, onOpen = ::openScreen)
+                PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = nowPlayingReturn })
+                PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { openNowPlaying(PhoneScreen.Library) })
+                PhoneScreen.Playlists -> PhonePlaylists(
+                    model,
+                    playlistActions,
+                    onBack = { screen = PhoneScreen.Home },
+                    onOpenLibrary = { screen = PhoneScreen.Library },
+                )
                 PhoneScreen.Settings -> PhoneSettings(model, onBack = { screen = PhoneScreen.Home }, onChooseFolder, onCustomAccent = { picking = true })
+                PhoneScreen.Inbox -> PhoneInbox(
+                    model,
+                    onBack = { screen = inboxReturn },
+                    onOpenProgress = { exportTask?.let { progressDialogTaskId = it.id; hiddenProgressTaskId = null } },
+                    onCancelExport = model::cancelPlaylistBundleExport,
+                )
                 PhoneScreen.EditTags -> {
                     val track = tracks[editingId]
                     if (track == null) LaunchedEffect(Unit) { closeEditor() } else PhoneTagEditor(model, track, editor, onClose = closeEditor)
@@ -134,8 +237,19 @@ private fun BoxScope.PhoneScreens(
         }
     }
     }
-    if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings) && state.current != null) {
-        MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { screen = PhoneScreen.NowPlaying }
+    }
+    exportTask?.takeIf {
+        it.status == dev.recorddisc.player.app.PlaylistBundleExportStatus.Running &&
+            it.id == progressDialogTaskId && it.id != hiddenProgressTaskId
+    }?.let { task ->
+        PlaylistBundleExportProgressDialog(
+            task,
+            onHide = { hiddenProgressTaskId = task.id },
+            onCancel = model::cancelPlaylistBundleExport,
+        )
+    }
+    if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings, PhoneScreen.Inbox) && state.current != null) {
+        MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { openNowPlaying(screen) }
     }
     if (picking) {
         PlatformBackHandler(enabled = true) { picking = false }
@@ -147,12 +261,17 @@ private fun BoxScope.PhoneScreens(
     }
 }
 
-/** Calls [onSwipe] after a leftward swipe of at least 80 dp. */
-private fun Modifier.swipeLeft(onSwipe: () -> Unit): Modifier = pointerInput(Unit) {
+/** Calls [onSwipe] after a horizontal swipe of at least 80 dp. */
+private fun Modifier.swipeHorizontally(onSwipe: (swipeRight: Boolean) -> Unit): Modifier = pointerInput(Unit) {
     var total = 0f
     detectHorizontalDragGestures(
         onDragStart = { total = 0f },
-        onDragEnd = { if (total < -80.dp.toPx()) onSwipe() },
+        onDragEnd = {
+            when {
+                total < -80.dp.toPx() -> onSwipe(false)
+                total > 80.dp.toPx() -> onSwipe(true)
+            }
+        },
     ) { _, dx -> total += dx }
 }
 
@@ -171,8 +290,9 @@ private fun PhoneHome(spin: DiscSpin, art: androidx.compose.ui.graphics.ImageBit
                         .semantics { contentDescription = "Open now playing" },
                 )
                 ArcButton("Library", 212.3.dp, 73.7.dp, 7f) { onOpen(PhoneScreen.Library) }
-                ArcButton("Playlists", 248.dp, 160.dp, 0f) { onOpen(PhoneScreen.Playlists) }
-                ArcButton("Settings", 212.3.dp, 246.3.dp, -7f) { onOpen(PhoneScreen.Settings) }
+                ArcButton("Playlists", 241.dp, 124.dp, 3f) { onOpen(PhoneScreen.Playlists) }
+                ArcButton("Settings", 241.dp, 196.dp, -3f) { onOpen(PhoneScreen.Settings) }
+                ArcButton("Inbox", 196.dp, 259.dp, 0f) { onOpen(PhoneScreen.Inbox) }
             }
         }
         Text(
@@ -208,6 +328,7 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
     val current = state.current
     val track = rememberTrackIndex(model)[current?.id]
     var menu by remember { mutableStateOf(false) }
+    var viewFileTrack by remember { mutableStateOf<TrackEntity?>(null) }
     Column(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             CircleIconButton("✕", "Close now playing", onClose)
@@ -229,22 +350,29 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         val editSong = LocalEditSong.current
                         val editLyrics = LocalEditLyrics.current
-                        for (item in listOf("Edit lyrics", "Edit metadata", "Add to playlist")) {
-                            val ready = item != "Add to playlist" && track != null
+                        val addToPlaylist = LocalAddToPlaylist.current
+                        for (item in listOf("Edit lyrics", "Edit metadata", "Add to playlist", "View file location")) {
+                            val ready = track != null
                             DropdownMenuItem(
                                 text = { Text(item, color = if (ready) disc.text else disc.muted) },
                                 trailingIcon = { if (!ready) SoonTag() },
                                 onClick = {
                                     menu = false
                                     when {
-                                        !ready -> model.message(SOON)
+                                        !ready -> Unit
+                                        item == "Add to playlist" -> addToPlaylist(track!!)
                                         item == "Edit lyrics" -> editLyrics(track!!)
-                                        else -> editSong(track!!)
+                                        item == "Edit metadata" -> editSong(track!!)
+                                        item == "View file location" -> viewFileTrack = track
                                     }
                                 },
                             )
                         }
                     }
+                viewFileTrack?.let { ft ->
+                    viewFileTrack = null
+                    viewFileLocation(ft.location, ft.folder)
+                }
                 }
             }
         }
@@ -256,12 +384,12 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
         Text(listOfNotNull(current?.album, track?.year?.toString()).joinToString(" · "), Modifier.padding(top = 3.dp), color = disc.muted, fontSize = 12.sp, maxLines = 1)
         SeekRow(model, state, Modifier.padding(top = 20.dp, bottom = 4.dp), textSize = 11)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            CtrlButton(DiscIcons.Shuffle, if (state.shuffle) "Shuffle on" else "Shuffle off", 44.dp, 22.dp, { model.player.setShuffle(!state.shuffle) }, active = state.shuffle)
+            CtrlButton(DiscIcons.Shuffle, if (state.shuffle) "Shuffle on" else "Shuffle off", 44.dp, 22.dp, { model.setShuffle(!state.shuffle) }, active = state.shuffle)
             CtrlButton(DiscIcons.Prev, "Previous", 44.dp, 22.dp, model.player::previous)
             PlayButton(state.isPlaying, 62.dp, 28.dp, model::togglePlay)
             CtrlButton(DiscIcons.Next, "Next", 44.dp, 22.dp, model.player::next)
             CtrlButton(
-                DiscIcons.Repeat, state.repeatMode.label(), 44.dp, 22.dp, { model.player.setRepeatMode(state.repeatMode.next()) },
+                DiscIcons.Repeat, state.repeatMode.label(), 44.dp, 22.dp, { model.setRepeatMode(state.repeatMode.next()) },
                 active = state.repeatMode != RepeatMode.Off, badge = if (state.repeatMode == RepeatMode.One) "1" else null,
             )
         }

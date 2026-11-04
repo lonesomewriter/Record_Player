@@ -26,6 +26,8 @@ import dev.recorddisc.player.tags.TagReader
 import dev.recorddisc.player.tags.PlaylistBundle
 import dev.recorddisc.player.tags.PlaylistBundleSong
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.Surface
@@ -67,10 +69,30 @@ class DesktopLibraryPlatform(private val dataDirectory: File = DesktopPaths.data
         writeAtomically(File(destination)) { output -> bytes.inputStream().use { it.copyTo(output) } }
     }
 
-    override suspend fun writeExportFile(destination: String, sourcePath: String) = withContext(Dispatchers.IO) {
+    override suspend fun writeExportFile(
+        destination: String,
+        sourcePath: String,
+        onProgress: (PlaylistBundleExportProgress) -> Unit,
+        checkActive: () -> Unit,
+    ) = withContext(Dispatchers.IO) {
         val source = File(sourcePath)
         require(source.isFile) { "Export file can't be read" }
-        writeAtomically(File(destination)) { output -> source.inputStream().use { it.copyTo(output) } }
+        val total = source.length()
+        var copied = 0L
+        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, copied, total))
+        writeAtomically(File(destination), checkActive = checkActive) { output ->
+            source.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    checkActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    copied += count
+                    onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, copied, total))
+                }
+            }
+        }
     }
 
     override suspend fun readPlaylistText(location: String): PlaylistTextFile = withContext(Dispatchers.IO) {
@@ -98,7 +120,10 @@ class DesktopLibraryPlatform(private val dataDirectory: File = DesktopPaths.data
         customCoverPath: String?,
         fallbackCover: TrackEntity?,
         includeLyrics: Boolean,
+        onProgress: (PlaylistBundleExportProgress) -> Unit,
     ) = withContext(Dispatchers.IO) {
+        val coroutineContext = currentCoroutineContext()
+        val checkActive = { coroutineContext.ensureActive() }
         val transferDirectory = playlistTransferDirectory().apply {
             check(isDirectory || mkdirs()) { "Couldn't prepare playlist export storage" }
         }
@@ -119,10 +144,23 @@ class DesktopLibraryPlatform(private val dataDirectory: File = DesktopPaths.data
                 File(temporaryDirectory, "cover.$extension").apply { writeBytes(bytes) }
             }
             if (customCoverPath != null) require(coverFile?.isFile == true) { "Playlist cover can't be read" }
-            val target = File(destination)
-            writeAtomically(target) { output ->
-                PlaylistBundle.write(output, name, bundleSongs, coverFile, includeLyrics)
+            val bundleFile = File(temporaryDirectory, "playlist.rdplaylist")
+            FileOutputStream(bundleFile).use { output ->
+                PlaylistBundle.write(
+                    output,
+                    name,
+                    bundleSongs,
+                    coverFile,
+                    includeLyrics,
+                    onProgress = { completed, total ->
+                        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Packaging, completed, total))
+                    },
+                    checkActive = checkActive,
+                )
+                output.flush()
+                output.fd.sync()
             }
+            writeExportFile(destination, bundleFile.absolutePath, onProgress, checkActive)
         } catch (error: Exception) {
             exportFailure = error
             throw error
@@ -338,16 +376,18 @@ class DesktopLibraryPlatform(private val dataDirectory: File = DesktopPaths.data
         else -> null
     }
 
-    private fun writeAtomically(target: File, write: (java.io.OutputStream) -> Unit) {
+    private fun writeAtomically(target: File, checkActive: () -> Unit = {}, write: (java.io.OutputStream) -> Unit) {
         val parent = target.absoluteFile.parentFile ?: throw java.io.IOException("Export folder isn't available")
         require(parent.isDirectory) { "Export folder isn't available" }
         val temporary = File(parent, ".${target.name}.${System.nanoTime()}.tmp")
         try {
             FileOutputStream(temporary).use { output ->
                 write(output)
+                checkActive()
                 output.flush()
                 output.fd.sync()
             }
+            checkActive()
             try {
                 Files.move(temporary.toPath(), target.toPath(), ATOMIC_MOVE, REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {

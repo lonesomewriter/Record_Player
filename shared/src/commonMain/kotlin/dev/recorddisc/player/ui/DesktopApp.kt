@@ -82,8 +82,10 @@ fun DesktopApp(
     appVersion: String = "dev",
     startAccentPicker: Boolean = false,
     editor: EditorActions = EditorActions(),
+    playlistActions: PlaylistFileActions = PlaylistFileActions(),
     startEditor: Boolean = false,
     startLyricsEditor: Boolean = false,
+    startPlaylistId: Long? = null,
 ) {
     val settings = model.settings.collectAsState().value
     DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458), light = settings?.useLightTheme() == true) {
@@ -108,20 +110,35 @@ fun DesktopApp(
                     onStart = { model.finishSetup() },
                     narrow = narrow,
                 )
-            } else androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t: dev.recorddisc.player.library.TrackEntity -> lyricsId = t.id }) {
+            } else PlaylistHost(model) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t: dev.recorddisc.player.library.TrackEntity -> lyricsId = t.id }) {
             ProvideEditSong({ editingId = it.id }) {
                 var view by remember { mutableStateOf(startView) }
+                var playlistId by remember { mutableStateOf(startPlaylistId) }
                 var queueOpen by remember { mutableStateOf(true) }
-                val main = MainContext(narrow, startLibrary, appVersion, chooseFolder) { picking = true }
+                val main = MainContext(
+                    narrow = narrow,
+                    startLibrary = startLibrary,
+                    appVersion = appVersion,
+                    chooseFolder = chooseFolder,
+                    playlistActions = playlistActions,
+                    selectedPlaylistId = playlistId,
+                    onSelectPlaylist = { playlistId = it },
+                    onOpenLibrary = { view = DesktopView.Library; playlistId = null },
+                    onCustomAccent = { picking = true },
+                )
                 if (narrow) {
                     Column(Modifier.fillMaxSize()) {
-                        TopNav(view) { view = it }
+                        TopNav(view) { view = it; if (it == DesktopView.Playlists) playlistId = null }
                         Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, main) }
                         Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { view = DesktopView.Home }
                     }
                 } else {
                     Row(Modifier.fillMaxSize()) {
-                        Sidebar(model, view, if (roomForQueue) 236.dp else 210.dp) { view = it }
+                        Sidebar(model, view, playlistId, if (roomForQueue) 236.dp else 210.dp, onSelect = { view = it; if (it == DesktopView.Playlists) playlistId = null }, onSelectPlaylist = {
+                            playlistId = it
+                            view = DesktopView.Playlists
+                        })
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, main) }
@@ -141,6 +158,7 @@ fun DesktopApp(
                 }
             }
             }
+            }
             val editing = tracks[editingId]
             if (settings.setupDone && editing != null) DesktopTagEditor(model, editing, editor) { editingId = null }
             val lyricsTrack = tracks[lyricsId]
@@ -151,8 +169,16 @@ fun DesktopApp(
 }
 
 @Composable
-private fun Sidebar(model: AppModel, view: DesktopView, width: androidx.compose.ui.unit.Dp, onSelect: (DesktopView) -> Unit) {
+private fun Sidebar(
+    model: AppModel,
+    view: DesktopView,
+    selectedPlaylistId: Long?,
+    width: androidx.compose.ui.unit.Dp,
+    onSelect: (DesktopView) -> Unit,
+    onSelectPlaylist: (Long) -> Unit,
+) {
     val count = model.tracks.collectAsState().value.size
+    val playlists by model.playlists.collectAsState()
     val divider = disc.line
     Column(
         Modifier.width(width).fillMaxHeight()
@@ -163,8 +189,23 @@ private fun Sidebar(model: AppModel, view: DesktopView, width: androidx.compose.
         BrandRow(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 26.dp))
         for (v in DesktopView.entries) NavItem(v, v == view) { onSelect(v) }
         Text("YOUR PLAYLISTS", Modifier.padding(start = 8.dp, top = 28.dp, bottom = 8.dp), color = disc.muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.17.em)
-        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Playlists arrive in a later update", color = disc.muted, fontSize = 11.sp)
+        if (playlists.isEmpty()) {
+            Text("No playlists yet", Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = disc.muted, fontSize = 11.sp)
+        } else {
+            playlists.take(5).forEach { playlist ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(if (selectedPlaylistId == playlist.id) disc.soft else Color.Transparent)
+                        .clickable {
+                            onSelectPlaylist(playlist.id)
+                        }.padding(horizontal = 7.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PlaylistArtwork(model, playlist, 28.dp)
+                    Text(playlist.name, Modifier.weight(1f), color = if (selectedPlaylistId == playlist.id) disc.text else disc.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(playlist.songCount.toString(), color = disc.muted, fontSize = 9.sp)
+                }
+            }
         }
         Spacer(Modifier.weight(1f))
         Box(Modifier.fillMaxWidth().height(1.dp).background(disc.line))
@@ -194,7 +235,6 @@ private fun NavItem(v: DesktopView, selected: Boolean, compact: Boolean = false,
         if (!compact) {
             Box(Modifier.size(6.dp).alpha(if (selected) 1f else 0.28f).clip(CircleShape).background(disc.accentReadable))
         }
-        if (v == DesktopView.Playlists) SoonTag()
     }
 }
 
@@ -217,6 +257,10 @@ private class MainContext(
     val startLibrary: LibraryNav?,
     val appVersion: String,
     val chooseFolder: () -> String?,
+    val playlistActions: PlaylistFileActions,
+    val selectedPlaylistId: Long?,
+    val onSelectPlaylist: (Long?) -> Unit,
+    val onOpenLibrary: () -> Unit,
     val onCustomAccent: () -> Unit,
 )
 
@@ -227,15 +271,16 @@ private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view
         LibraryView(model, state, narrow, main.startLibrary)
         return
     }
+    if (view == DesktopView.Playlists) {
+        DesktopPlaylists(model, main.playlistActions, narrow, main.selectedPlaylistId, main.onSelectPlaylist, main.onOpenLibrary)
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = if (narrow) 18.dp else 34.dp, vertical = if (narrow) 22.dp else 28.dp)) {
         ViewHeader(model, view)
         when (view) {
             DesktopView.Home -> HomeView(model, state, spin, narrow)
             DesktopView.Library -> Unit
-            DesktopView.Playlists -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Playlists are coming in a later update.", color = disc.muted, fontSize = 13.sp)
-                SoonTag()
-            }
+            DesktopView.Playlists -> Unit
             DesktopView.Settings -> DesktopSettings(model, narrow, main.appVersion, main.chooseFolder, main.onCustomAccent)
         }
     }
@@ -516,12 +561,12 @@ private fun Dock(model: AppModel, state: PlaybackState, narrow: Boolean, queueOp
         }
         Column(Modifier.weight(if (narrow) 1.6f else 2.2f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                CtrlButton(DiscIcons.Shuffle, if (state.shuffle) "Shuffle on" else "Shuffle off", 32.dp, 17.dp, { model.player.setShuffle(!state.shuffle) }, active = state.shuffle)
+                CtrlButton(DiscIcons.Shuffle, if (state.shuffle) "Shuffle on" else "Shuffle off", 32.dp, 17.dp, { model.setShuffle(!state.shuffle) }, active = state.shuffle)
                 CtrlButton(DiscIcons.Prev, "Previous", 32.dp, 17.dp, model.player::previous)
                 PlayButton(state.isPlaying, 38.dp, 18.dp, model::togglePlay)
                 CtrlButton(DiscIcons.Next, "Next", 32.dp, 17.dp, model.player::next)
                 CtrlButton(
-                    DiscIcons.Repeat, state.repeatMode.label(), 32.dp, 17.dp, { model.player.setRepeatMode(state.repeatMode.next()) },
+                    DiscIcons.Repeat, state.repeatMode.label(), 32.dp, 17.dp, { model.setRepeatMode(state.repeatMode.next()) },
                     active = state.repeatMode != RepeatMode.Off, badge = if (state.repeatMode == RepeatMode.One) "1" else null,
                 )
             }

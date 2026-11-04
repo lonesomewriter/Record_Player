@@ -60,6 +60,8 @@ object PlaylistBundle {
         songs: List<PlaylistBundleSong>,
         coverFile: File? = null,
         includeLyrics: Boolean = true,
+        onProgress: (completedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+        checkActive: () -> Unit = {},
     ) {
         val archiveSongs = archiveSongs(songs, includeLyrics)
         if (coverFile != null) {
@@ -74,24 +76,40 @@ object PlaylistBundle {
         var total = 0L
         total += playlistBytes.size
         require(total <= MAX_TOTAL_BYTES) { "Playlist bundle is too large" }
-        putBytes(zip, PLAYLIST_FILE, playlistBytes)
+        val payloadBytes = archiveSongs.sumOf { archive ->
+            archive.song.file.length() + (archive.song.lyricsFile?.takeIf { includeLyrics }?.length() ?: 0L)
+        } + (coverFile?.length() ?: 0L)
+        val progressTotal = playlistBytes.size + payloadBytes * 2
+        var progressed = 0L
+        fun reportBytes(count: Long) {
+            progressed += count
+            onProgress(progressed, progressTotal)
+        }
+
+        checkActive()
+        putBytes(zip, PLAYLIST_FILE, playlistBytes, ::reportBytes, checkActive)
         archiveSongs.forEach { archive ->
             total += archive.song.file.length()
             checkTotal(total)
-            putFile(zip, archive.path, archive.song.file)
+            checkActive()
+            putFile(zip, archive.path, archive.song.file, ::reportBytes, checkActive)
             archive.song.lyricsFile?.takeIf { includeLyrics }?.let { lyrics ->
                 total += lyrics.length()
                 checkTotal(total)
-                putFile(zip, requireNotNull(archive.lyricsPath), lyrics)
+                checkActive()
+                putFile(zip, requireNotNull(archive.lyricsPath), lyrics, ::reportBytes, checkActive)
             }
         }
         coverFile?.let { cover ->
             total += cover.length()
             checkTotal(total)
-            putFile(zip, "cover.${cover.extension.lowercase()}", cover)
+            checkActive()
+            putFile(zip, "cover.${cover.extension.lowercase()}", cover, ::reportBytes, checkActive)
         }
+        checkActive()
         zip.finish()
         zip.flush()
+        checkActive()
     }
 
     fun read(input: InputStream, temporaryRoot: File): PlaylistBundleContents =
@@ -261,16 +279,24 @@ object PlaylistBundle {
         }
     }
 
-    private fun putFile(zip: ZipOutputStream, name: String, file: File) {
+    private fun putFile(
+        zip: ZipOutputStream,
+        name: String,
+        file: File,
+        reportBytes: (Long) -> Unit,
+        checkActive: () -> Unit,
+    ) {
         val size = file.length()
         require(size <= MAX_ENTRY_BYTES) { "File in playlist bundle is too large" }
         val crc = CRC32()
         file.inputStream().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
+                checkActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 crc.update(buffer, 0, count)
+                reportBytes(count.toLong())
             }
         }
         zip.putNextEntry(ZipEntry(name).apply {
@@ -284,27 +310,51 @@ object PlaylistBundle {
         file.inputStream().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
+                checkActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 written += count
                 require(written <= size) { "File changed while creating playlist bundle" }
                 writtenCrc.update(buffer, 0, count)
                 zip.write(buffer, 0, count)
+                reportBytes(count.toLong())
             }
         }
         require(written == size && writtenCrc.value == crc.value) { "File changed while creating playlist bundle" }
+        checkActive()
         zip.closeEntry()
     }
 
-    private fun putBytes(zip: ZipOutputStream, name: String, bytes: ByteArray) {
-        val crc = CRC32().apply { update(bytes) }
+    private fun putBytes(
+        zip: ZipOutputStream,
+        name: String,
+        bytes: ByteArray,
+        reportBytes: (Long) -> Unit,
+        checkActive: () -> Unit,
+    ) {
+        val crc = CRC32()
+        var offset = 0
+        while (offset < bytes.size) {
+            checkActive()
+            val count = minOf(DEFAULT_BUFFER_SIZE, bytes.size - offset)
+            crc.update(bytes, offset, count)
+            offset += count
+        }
         zip.putNextEntry(ZipEntry(name).apply {
             method = ZipEntry.STORED
             size = bytes.size.toLong()
             compressedSize = bytes.size.toLong()
             this.crc = crc.value
         })
-        zip.write(bytes)
+        offset = 0
+        while (offset < bytes.size) {
+            checkActive()
+            val count = minOf(DEFAULT_BUFFER_SIZE, bytes.size - offset)
+            zip.write(bytes, offset, count)
+            reportBytes(count.toLong())
+            offset += count
+        }
+        checkActive()
         zip.closeEntry()
     }
 

@@ -34,7 +34,11 @@ import dev.recorddisc.player.tags.DocumentStore
 import dev.recorddisc.player.tags.PlaylistBundle
 import dev.recorddisc.player.tags.PlaylistBundleSong
 import dev.recorddisc.player.tags.TagReader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.tag.TagOptionSingleton
 import java.io.File
@@ -162,24 +166,103 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
 
     override suspend fun writeExport(destination: String, bytes: ByteArray) = withContext(Dispatchers.IO) {
         val uri = Uri.parse(destination)
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "rwt")
+        val output = context.contentResolver.openOutputStream(uri, "wt")
             ?: throw java.io.IOException("Couldn't open the export destination")
-        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
-            output.write(bytes)
-            output.flush()
-            output.fd.sync()
+        output.use {
+            it.write(bytes)
+            it.flush()
         }
     }
 
-    override suspend fun writeExportFile(destination: String, sourcePath: String) = withContext(Dispatchers.IO) {
+    override suspend fun writeExportFile(
+        destination: String,
+        sourcePath: String,
+        onProgress: (PlaylistBundleExportProgress) -> Unit,
+        checkActive: () -> Unit,
+    ) = withContext(Dispatchers.IO) {
         val source = File(sourcePath)
         require(source.isFile) { "Export file can't be read" }
-        val descriptor = context.contentResolver.openFileDescriptor(Uri.parse(destination), "rwt")
-            ?: throw java.io.IOException("Couldn't open the export destination")
-        ParcelFileDescriptor.AutoCloseOutputStream(descriptor).use { output ->
-            source.inputStream().use { input -> input.copyTo(output) }
-            output.flush()
-            output.fd.sync()
+        val uri = Uri.parse(destination)
+        val transferRoot = playlistTransferDirectory().apply {
+            check(isDirectory || mkdirs()) { "Couldn't prepare playlist export storage" }
+        }
+        val backup = File.createTempFile("destination-", ".backup", transferRoot)
+        var destinationTouched = false
+        var failure: Exception? = null
+        try {
+            checkActive()
+            val originalSize = query(uri).first
+            val total = originalSize?.let { it + source.length() }
+            onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, 0, total))
+            val original = context.contentResolver.openInputStream(uri)
+                ?: throw java.io.IOException("Couldn't safely read the export destination")
+            var backedUp = 0L
+            original.use { input ->
+                FileOutputStream(backup).use { output ->
+                    backedUp = copyChecked(input, output, checkActive) { count ->
+                        backedUp += count
+                        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, backedUp, total))
+                    }
+                }
+            }
+            val transferTotal = backedUp + source.length()
+            onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, backedUp, transferTotal))
+            checkActive()
+
+            destinationTouched = true
+            val output = context.contentResolver.openOutputStream(uri, "wt")
+                ?: throw java.io.IOException("Couldn't open the export destination")
+            var written = 0L
+            output.use { destinationOutput ->
+                source.inputStream().use { input ->
+                    copyChecked(input, destinationOutput, checkActive) { count ->
+                        written += count
+                        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, backedUp + written, transferTotal))
+                    }
+                }
+                checkActive()
+                if (written != source.length()) throw java.io.IOException("The playlist bundle wasn't fully written")
+                destinationOutput.flush()
+            }
+            onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Saving, transferTotal, transferTotal))
+        } catch (error: Exception) {
+            var reportedFailure = error
+            if (destinationTouched) {
+                try {
+                    withContext(NonCancellable) {
+                        val backupSize = backup.length()
+                        var restored = 0L
+                        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Restoring, restored, backupSize))
+                        val output = context.contentResolver.openOutputStream(uri, "wt")
+                            ?: throw java.io.IOException("Couldn't restore the export destination")
+                        output.use { destinationOutput ->
+                            backup.inputStream().use { input ->
+                                copyChecked(input, destinationOutput, {}) { count ->
+                                    restored += count
+                                    onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Restoring, restored, backupSize))
+                                }
+                            }
+                            destinationOutput.flush()
+                        }
+                        if (restored != backupSize) throw java.io.IOException("The export destination wasn't fully restored")
+                    }
+                } catch (restoreError: Exception) {
+                    val restoreFailure = java.io.IOException("Couldn't restore the export destination", restoreError)
+                    if (error is CancellationException) {
+                        reportedFailure = restoreFailure
+                    } else {
+                        reportedFailure = java.io.IOException("Export failed and the previous destination couldn't be restored", error)
+                        reportedFailure.addSuppressed(restoreFailure)
+                    }
+                }
+            }
+            failure = reportedFailure
+            throw reportedFailure
+        } finally {
+            if (backup.exists() && !backup.delete()) {
+                val cleanupError = java.io.IOException("Couldn't remove the temporary export backup")
+                failure?.addSuppressed(cleanupError) ?: throw cleanupError
+            }
         }
     }
 
@@ -210,24 +293,41 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
         customCoverPath: String?,
         fallbackCover: TrackEntity?,
         includeLyrics: Boolean,
+        onProgress: (PlaylistBundleExportProgress) -> Unit,
     ) = withContext(Dispatchers.IO) {
+        val coroutineContext = currentCoroutineContext()
+        val checkActive = { coroutineContext.ensureActive() }
         val transferRoot = playlistTransferDirectory().apply {
             check(isDirectory || mkdirs()) { "Couldn't prepare playlist export storage" }
         }
         val temporaryDirectory = java.nio.file.Files.createTempDirectory(transferRoot.toPath(), "export-").toFile()
         var exportFailure: Exception? = null
         try {
+            val lyricLocations = if (includeLyrics) songs.mapNotNull { it.lyricsLocation } else emptyList()
+            val lyricSizes = lyricLocations.map { location -> query(Uri.parse(location)).first }
+            val totalInputBytes = if (lyricSizes.any { it == null }) null else
+                songs.sumOf { it.sizeBytes } + lyricSizes.filterNotNull().sum()
+            var copied = 0L
+            onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Copying, copied, totalInputBytes))
             val bundleSongs = songs.mapIndexed { index, track ->
+                checkActive()
                 val extension = AudioFormats.extensionOf(track.fileName)
                 val audioFile = File(temporaryDirectory, "song-$index.$extension")
-                copyDocumentToFile(track.location, audioFile, PlaylistBundle.MAX_ENTRY_BYTES)
+                copyDocumentToFile(track.location, audioFile, PlaylistBundle.MAX_ENTRY_BYTES, checkActive) { count ->
+                    copied += count
+                    onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Copying, copied, totalInputBytes))
+                }
                 val lyricsFile = track.lyricsLocation?.takeIf { includeLyrics }?.let { location ->
                     File(temporaryDirectory, "lyrics-$index.lrc").also {
-                        copyDocumentToFile(location, it, PlaylistBundle.MAX_ENTRY_BYTES)
+                        copyDocumentToFile(location, it, PlaylistBundle.MAX_ENTRY_BYTES, checkActive) { count ->
+                            copied += count
+                            onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Copying, copied, totalInputBytes))
+                        }
                     }
                 }
                 PlaylistBundleSong(audioFile, track.displayTitle, track.artist, track.durationMs, lyricsFile, track.fileName)
             }
+            checkActive()
             val coverFile = customCoverPath?.let(::File) ?: fallbackCover?.takeIf { it.hasArtwork }?.let { track ->
                 val bytes = readEmbeddedArtwork(track.location) ?: return@let null
                 val extension = imageExtension(bytes) ?: throw java.io.IOException("The first song's cover isn't JPEG or PNG")
@@ -235,13 +335,25 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
                 File(temporaryDirectory, "cover.$extension").apply { writeBytes(bytes) }
             }
             if (customCoverPath != null) require(coverFile?.isFile == true) { "Playlist cover can't be read" }
+            checkActive()
             val bundleFile = File(temporaryDirectory, "playlist.rdplaylist")
             FileOutputStream(bundleFile).use { output ->
-                PlaylistBundle.write(output, name, bundleSongs, coverFile, includeLyrics)
+                PlaylistBundle.write(
+                    output,
+                    name,
+                    bundleSongs,
+                    coverFile,
+                    includeLyrics,
+                    onProgress = { completed, total ->
+                        onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Packaging, completed, total))
+                    },
+                    checkActive = checkActive,
+                )
                 output.flush()
                 output.fd.sync()
             }
-            writeExportFile(destination, bundleFile.absolutePath)
+            checkActive()
+            writeExportFile(destination, bundleFile.absolutePath, onProgress, checkActive)
         } catch (error: Exception) {
             exportFailure = error
             throw error
@@ -425,22 +537,42 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
         }
     }
 
-    private fun copyDocumentToFile(location: String, destination: File, maxBytes: Long) {
+    private fun copyDocumentToFile(
+        location: String,
+        destination: File,
+        maxBytes: Long,
+        checkActive: () -> Unit,
+        onProgress: (Long) -> Unit,
+    ) {
         val input = context.contentResolver.openInputStream(Uri.parse(location))
             ?: throw java.io.IOException("Couldn't read ${Uri.parse(location).lastPathSegment ?: "a song"}")
         input.use { source ->
             FileOutputStream(destination).use { output ->
-                val buffer = ByteArray(64 * 1024)
-                var copied = 0L
-                while (true) {
-                    val count = source.read(buffer)
-                    if (count < 0) break
-                    copied += count
-                    require(copied <= maxBytes) { "Playlist file is too large" }
-                    output.write(buffer, 0, count)
-                }
+                copyChecked(source, output, checkActive, maxBytes, onProgress)
             }
         }
+    }
+
+    private fun copyChecked(
+        input: InputStream,
+        output: java.io.OutputStream,
+        checkActive: () -> Unit,
+        maxBytes: Long = Long.MAX_VALUE,
+        onProgress: (Long) -> Unit = {},
+    ): Long {
+        val buffer = ByteArray(64 * 1024)
+        var copied = 0L
+        while (true) {
+            checkActive()
+            val count = input.read(buffer)
+            if (count < 0) break
+            checkActive()
+            copied += count
+            require(copied <= maxBytes) { "Playlist file is too large" }
+            output.write(buffer, 0, count)
+            onProgress(count.toLong())
+        }
+        return copied
     }
 
     private fun readEmbeddedArtwork(location: String): ByteArray? {

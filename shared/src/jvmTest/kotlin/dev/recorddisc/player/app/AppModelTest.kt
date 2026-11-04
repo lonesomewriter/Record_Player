@@ -23,10 +23,13 @@ import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.QueueItem
 import dev.recorddisc.player.playback.RepeatMode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,7 +57,7 @@ class AppModelTest {
 
     @After
     fun tearDown() {
-        scope.cancel()
+        runBlocking { scope.coroutineContext[Job]?.cancelAndJoin() }
         databases.forEach { it.close() }
     }
 
@@ -131,6 +134,7 @@ class AppModelTest {
         model.tracks.await("initial tracks") { it.size == 3 }
         model.finishSetup()
         model.settings.await("setup done") { it?.setupDone == true }
+        model.initialized.await("app model initialized") { it }
         return model
     }
 
@@ -239,6 +243,23 @@ class AppModelTest {
     }
 
     @Test
+    fun playingASearchResultQueuesTheFullLibrary() {
+        val player = FakePlayer()
+        val model = AppModel(database(), player, FakePlatform(), scope)
+        model.scan("/music")
+        val library = model.tracks.await("library loaded") { it.size == 3 }
+        model.setLibraryQuery("neon")
+        val results = model.librarySongs.await("search results") { it.size == 2 }
+
+        model.play(results, 1)
+
+        val (queue, index, play) = player.queues.last()
+        assertEquals(library.map { it.id }, queue.map { it.id })
+        assertEquals(library.indexOfFirst { it.id == results[1].id }, index)
+        assertTrue(play)
+    }
+
+    @Test
     fun albumsAndArtistsFollowTheSearch() {
         val model = AppModel(database(), FakePlayer(), FakePlatform(), scope)
         model.scan("/music")
@@ -255,15 +276,21 @@ class AppModelTest {
     fun albumPlayAndShuffleSetShuffleAndStartPlaying() {
         val player = FakePlayer()
         val model = AppModel(database(), player, FakePlatform(), scope)
+        model.initialized.await("app model initialized") { it }
         model.scan("/music")
+        val library = model.tracks.await("tracks") { it.size == 3 }
         val album = model.albums.await("albums") { it.size == 2 }.first { it.name == "After Hours" }
         model.playAll(album.tracks, shuffle = true)
         assertTrue(player.shuffleOn)
-        assertEquals(album.tracks.map { it.id }, player.queues.last().first.map { it.id })
+        model.settings.await("shuffle preference saved") { it?.shuffle == true }
+        assertEquals(library.map { it.id }, player.queues.last().first.map { it.id })
+        assertTrue(player.queues.last().first[player.queues.last().second].id in album.tracks.map { it.id })
         assertTrue(player.queues.last().third)
         model.playAll(album.tracks, shuffle = false)
         assertEquals(false, player.shuffleOn)
-        assertEquals(0, player.queues.last().second)
+        model.settings.await("shuffle preference cleared") { it?.shuffle == false }
+        assertEquals(library.map { it.id }, player.queues.last().first.map { it.id })
+        assertEquals(library.indexOfFirst { it.id == album.tracks.first().id }, player.queues.last().second)
     }
 
     @Test
@@ -382,9 +409,38 @@ class AppModelTest {
 
     @Test
     fun malformedSettingsFallBackToDefaults() {
-        val s = AppSettings.from(mapOf("accent" to "Plaid", "customAccent" to "zz", "setupDone" to "yes", "musicFolder" to " ", "theme" to "Sepia"))
+        val s = AppSettings.from(
+            mapOf(
+                "accent" to "Plaid",
+                "customAccent" to "zz",
+                "setupDone" to "yes",
+                "musicFolder" to " ",
+                "theme" to "Sepia",
+                AppSettings.SHUFFLE to "yes",
+                AppSettings.REPEAT_MODE to "Loop",
+            ),
+        )
         assertEquals(AppSettings(), s)
         assertEquals(0xFFABCDEF, AppSettings.from(mapOf("accent" to "Custom", "customAccent" to "abcdef")).accentArgb)
+    }
+
+    @Test
+    fun playbackModesAreRestoredAndPersisted() = runBlocking {
+        val db = database()
+        db.settings().put(SettingEntity(AppSettings.SHUFFLE, "true"))
+        db.settings().put(SettingEntity(AppSettings.REPEAT_MODE, RepeatMode.All.name))
+        val player = FakePlayer()
+        val model = AppModel(db, player, FakePlatform(), scope)
+
+        model.settings.await("saved playback modes") { it?.shuffle == true && it.repeatMode == RepeatMode.All }
+        assertTrue(player.state.value.shuffle)
+        assertEquals(RepeatMode.All, player.state.value.repeatMode)
+
+        model.setShuffle(false)
+        model.setRepeatMode(RepeatMode.One)
+        model.settings.await("updated playback modes") { it?.shuffle == false && it.repeatMode == RepeatMode.One }
+        assertFalse(player.state.value.shuffle)
+        assertEquals(RepeatMode.One, player.state.value.repeatMode)
     }
 
     @Test
@@ -423,6 +479,12 @@ class AppModelTest {
 
         model.playPlaylist(playlist.id)
         assertEquals(listOf(songs[0].id, songs[2].id, songs[1].id), player.queues.last().first.map { it.id })
+        model.playPlaylist(playlist.id, shuffle = true)
+        model.settings.await("playlist shuffle preference saved") { it?.shuffle == true }
+        assertTrue(player.shuffleOn)
+        model.playPlaylistSong(view.songs, 1)
+        assertEquals(listOf(songs[0].id, songs[2].id, songs[1].id), player.queues.last().first.map { it.id })
+        assertEquals(1, player.queues.last().second)
         assertTrue(model.removeFromPlaylist(playlist.id, songs[1].id))
         assertFalse(model.removeFromPlaylist(playlist.id, songs[1].id))
 
@@ -448,6 +510,62 @@ class AppModelTest {
         }
 
         assertEquals(2, db.playlists().itemsFor(playlist.id).size)
+    }
+
+    @Test
+    fun backgroundBundleExportRetainsProgressAndCompletionInAppState() {
+        val platform = object : FakePlatform() {
+            override suspend fun writePlaylistBundle(
+                destination: String,
+                name: String,
+                songs: List<TrackEntity>,
+                customCoverPath: String?,
+                fallbackCover: TrackEntity?,
+                includeLyrics: Boolean,
+                onProgress: (PlaylistBundleExportProgress) -> Unit,
+            ) {
+                onProgress(PlaylistBundleExportProgress(PlaylistBundleExportStage.Packaging, 4, 8))
+            }
+        }
+        val model = setUp(File(tmp.root, "background-export.db"), platform = platform)
+        val playlist = runBlocking { model.createPlaylist("Background mix") }
+
+        assertTrue(model.startPlaylistBundleExport(playlist.id, playlist.name, "picked.rdplaylist", includeLyrics = true))
+        val completed = model.playlistBundleExportTask.await("bundle export completion") {
+            it?.status == PlaylistBundleExportStatus.Completed
+        }!!
+        assertEquals(playlist.name, completed.playlistName)
+        assertEquals(0.5f, completed.progress?.fraction)
+    }
+
+    @Test
+    fun cancellingBackgroundBundleExportIsRetainedAsATerminalTask() {
+        val exportStarted = CompletableDeferred<Unit>()
+        val platform = object : FakePlatform() {
+            override suspend fun writePlaylistBundle(
+                destination: String,
+                name: String,
+                songs: List<TrackEntity>,
+                customCoverPath: String?,
+                fallbackCover: TrackEntity?,
+                includeLyrics: Boolean,
+                onProgress: (PlaylistBundleExportProgress) -> Unit,
+            ) {
+                exportStarted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val model = setUp(File(tmp.root, "cancel-background-export.db"), platform = platform)
+        val playlist = runBlocking { model.createPlaylist("Cancelable mix") }
+
+        assertTrue(model.startPlaylistBundleExport(playlist.id, playlist.name, "picked.rdplaylist", includeLyrics = true))
+        runBlocking { withTimeout(5_000) { exportStarted.await() } }
+        model.cancelPlaylistBundleExport()
+
+        val cancelled = model.playlistBundleExportTask.await("bundle export cancellation") {
+            it?.status == PlaylistBundleExportStatus.Cancelled
+        }!!
+        assertEquals(playlist.name, cancelled.playlistName)
     }
 
     @Test
@@ -526,6 +644,7 @@ class AppModelTest {
     fun bundleImportCopiesNewSongsRescansAndAddsThemToThePlaylist() = runBlocking {
         val platform = FakePlatform()
         val model = readyModel(database(), FakePlayer(), platform)
+        model.createPlaylist("Renamed Mix")
         val previewDirectory = File(tmp.root, "new-song-preview").apply { mkdirs() }
         val audio = File(previewDirectory, "New Song.flac").apply { writeBytes(byteArrayOf(1, 2, 3)) }
         val lyrics = File(previewDirectory, "New Song.lrc").apply { writeText("[00:01.00]Line\n") }
@@ -547,14 +666,15 @@ class AppModelTest {
             temporaryDirectory = previewDirectory.absolutePath,
         )
 
-        val imported = model.importPlaylistBundle(preview)
+        val imported = model.importPlaylistBundle(preview, "Renamed Mix")
 
         val view = model.playlists.await("new-song bundle playlist") { playlists ->
             playlists.firstOrNull { it.id == imported.id }?.songs?.size == 1
         }
             .first { it.id == imported.id }
         assertEquals(listOf("New Song"), view.songs.map { it.title })
-        assertEquals(listOf("New Mix"), platform.importedPlaylistNames)
+        assertEquals("Renamed Mix (2)", imported.name)
+        assertEquals(listOf("Renamed Mix (2)"), platform.importedPlaylistNames)
         assertEquals(listOf("/music"), platform.importedPlaylistFolders)
         assertEquals(
             listOf(PlaylistImportFile(audio.absolutePath, "New Song.flac", lyrics.absolutePath)),

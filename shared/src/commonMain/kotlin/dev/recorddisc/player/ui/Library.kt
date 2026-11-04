@@ -81,8 +81,6 @@ class LibraryNav(tab: LibraryTab = LibraryTab.Songs, vararg pages: LibraryPage) 
     }
 }
 
-private const val SOON = "Coming in a later update"
-
 /** "Search songs, albums, artists". */
 @Composable
 fun LibrarySearch(model: AppModel, modifier: Modifier = Modifier, textSize: Int = 13) {
@@ -147,30 +145,37 @@ private fun Gone(what: String) =
 @Composable
 fun SongMenuButton(model: AppModel, track: TrackEntity, size: Dp = 28.dp) {
     var open by remember { mutableStateOf(false) }
+    var viewFileTrack by remember { mutableStateOf<TrackEntity?>(null) }
     val editSong = LocalEditSong.current
     val editLyrics = LocalEditLyrics.current
+    val addToPlaylist = LocalAddToPlaylist.current
     Box {
         Text(
             "⋮", Modifier.width(size).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "More options") { open = true }.padding(vertical = 4.dp),
             color = disc.muted, fontSize = 18.sp, textAlign = TextAlign.Center,
         )
         DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (item in listOf("Add to playlist", "Edit metadata", "Edit lyrics")) {
-                val ready = item != "Add to playlist"
+            for (item in listOf("Add to playlist", "Edit metadata", "Edit lyrics", "View file location")) {
+                val ready = true
                 DropdownMenuItem(
                     text = { Text(item, color = if (ready) disc.text else disc.muted) },
                     trailingIcon = { if (!ready) SoonTag() },
                     onClick = {
                         open = false
                         when {
-                            !ready -> model.message(SOON)
+                            item == "Add to playlist" -> addToPlaylist(track)
                             item == "Edit lyrics" -> editLyrics(track)
-                            else -> editSong(track)
+                            item == "Edit metadata" -> editSong(track)
+                            item == "View file location" -> viewFileTrack = track
                         }
                     },
                 )
             }
         }
+    }
+    viewFileTrack?.let { ft ->
+        viewFileTrack = null
+        viewFileLocation(ft.location, ft.folder)
     }
 }
 

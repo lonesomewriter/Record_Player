@@ -36,6 +36,7 @@ import dev.recorddisc.player.library.trackEntity
 import dev.recorddisc.player.library.displayTitle
 import dev.recorddisc.player.library.matchTrackByTags
 import dev.recorddisc.player.playback.MusicPlayer
+import dev.recorddisc.player.playback.RepeatMode
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +65,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+enum class PlaylistBundleExportStage { Copying, Packaging, Saving, Restoring }
+
+data class PlaylistBundleExportProgress(
+    val stage: PlaylistBundleExportStage,
+    val completedBytes: Long,
+    val totalBytes: Long?,
+) {
+    val fraction: Float?
+        get() = totalBytes?.takeIf { it > 0 }?.let { (completedBytes.toFloat() / it).coerceIn(0f, 1f) }
+}
+
+enum class PlaylistBundleExportStatus { Running, Completed, Cancelled, Failed }
+
+data class PlaylistBundleExportTask(
+    val id: Long,
+    val playlistId: Long,
+    val playlistName: String,
+    val status: PlaylistBundleExportStatus,
+    val progress: PlaylistBundleExportProgress? = null,
+    val failure: String? = null,
+)
+
 /** What each platform provides to the shared app. */
 interface LibraryPlatform {
     /** Folder to offer on first run (desktop: the Music folder), or null to ask (Android). */
@@ -88,7 +111,12 @@ interface LibraryPlatform {
     suspend fun writeExport(destination: String, bytes: ByteArray): Unit =
         throw UnsupportedOperationException("Playlist export isn't available here")
     /** Streams a generated file, such as a `.rdplaylist`, to the destination selected by the user. */
-    suspend fun writeExportFile(destination: String, sourcePath: String): Unit =
+    suspend fun writeExportFile(
+        destination: String,
+        sourcePath: String,
+        onProgress: (PlaylistBundleExportProgress) -> Unit = {},
+        checkActive: () -> Unit = {},
+    ): Unit =
         throw UnsupportedOperationException("Playlist export isn't available here")
     /** Copies new bundle songs and their lyrics into `Imported/<playlistName>` under [musicFolder]. */
     suspend fun importSongs(
@@ -105,6 +133,7 @@ interface LibraryPlatform {
         customCoverPath: String?,
         fallbackCover: TrackEntity?,
         includeLyrics: Boolean,
+        onProgress: (PlaylistBundleExportProgress) -> Unit = {},
     ): Unit = throw UnsupportedOperationException("Playlist bundle export isn't available here")
     suspend fun readPlaylistBundle(location: String, library: List<TrackEntity>): PlaylistBundlePreview =
         throw UnsupportedOperationException("Playlist bundle import isn't available here")
@@ -160,6 +189,9 @@ class AppModel(
         .map { rows -> AppSettings.from(rows.associate { it.name to it.value }) }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
+    private val _initialized = MutableStateFlow(false)
+    val initialized: StateFlow<Boolean> = _initialized.asStateFlow()
+
     val tracks: StateFlow<List<TrackEntity>> = tracksDao.observeAll().stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /** Playlists with library songs resolved; missing tracks remain stored in their original positions. */
@@ -212,6 +244,58 @@ class AppModel(
     val scan: StateFlow<ScanState> = _scan.asStateFlow()
     private var scanJob: Job? = null
 
+    private val _playlistBundleExportTask = MutableStateFlow<PlaylistBundleExportTask?>(null)
+    /** The latest custom-format export, kept beyond the screen that started it. */
+    val playlistBundleExportTask: StateFlow<PlaylistBundleExportTask?> = _playlistBundleExportTask.asStateFlow()
+    private var playlistBundleExportJob: Job? = null
+    private var nextPlaylistBundleExportId = 0L
+
+    fun startPlaylistBundleExport(playlistId: Long, playlistName: String, destination: String, includeLyrics: Boolean): Boolean {
+        if (playlistBundleExportJob?.isActive == true) return false
+        val task = PlaylistBundleExportTask(
+            id = ++nextPlaylistBundleExportId,
+            playlistId = playlistId,
+            playlistName = playlistName,
+            status = PlaylistBundleExportStatus.Running,
+        )
+        _playlistBundleExportTask.value = task
+        playlistBundleExportJob = scope.launch {
+            try {
+                exportPlaylistBundle(playlistId, destination, includeLyrics) { progress ->
+                    if (_playlistBundleExportTask.value?.id == task.id) {
+                        _playlistBundleExportTask.value = task.copy(status = PlaylistBundleExportStatus.Running, progress = progress)
+                    }
+                }
+                _playlistBundleExportTask.value = task.copy(
+                    status = PlaylistBundleExportStatus.Completed,
+                    progress = _playlistBundleExportTask.value?.takeIf { it.id == task.id }?.progress,
+                )
+            } catch (cancelled: CancellationException) {
+                val cleanupFailure = cancelled.suppressedExceptions.firstOrNull()
+                _playlistBundleExportTask.value = task.copy(
+                    status = if (cleanupFailure == null) PlaylistBundleExportStatus.Cancelled else PlaylistBundleExportStatus.Failed,
+                    progress = _playlistBundleExportTask.value?.takeIf { it.id == task.id }?.progress,
+                    failure = cleanupFailure?.let { "Export cleanup failed: ${it.message ?: "destination may need attention"}" },
+                )
+                throw cancelled
+            } catch (failure: Exception) {
+                _playlistBundleExportTask.value = task.copy(
+                    status = PlaylistBundleExportStatus.Failed,
+                    progress = _playlistBundleExportTask.value?.takeIf { it.id == task.id }?.progress,
+                    failure = failure.message ?: "Playlist export failed",
+                )
+                message("Couldn't export ${task.playlistName}")
+            } finally {
+                playlistBundleExportJob = null
+            }
+        }
+        return true
+    }
+
+    fun cancelPlaylistBundleExport() {
+        playlistBundleExportJob?.cancel()
+    }
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     /** Short notices for a toast or snackbar. */
     val messages: SharedFlow<String> = _messages.asSharedFlow()
@@ -234,6 +318,8 @@ class AppModel(
             // A tag save the app couldn't finish last time (Android) is completed or undone first.
             runCatching { platform.recoverPendingSaves() }.getOrNull()?.let(::message)
             val s = settings.filterNotNull().first()
+            player.setShuffle(s.shuffle)
+            player.setRepeatMode(s.repeatMode)
             val folder = s.musicFolder
             if (s.setupDone && folder != null) {
                 // Show the library straight away (or the queue as it was left), then pick up any
@@ -243,6 +329,7 @@ class AppModel(
                 rescan(folder)
             }
             rememberQueue()
+            _initialized.value = true
         }
         watchFolder()
     }
@@ -370,12 +457,26 @@ class AppModel(
         }
     }
 
-    fun play(tracks: List<TrackEntity>, index: Int) = loadQueue(tracks, play = true, index)
+    /** Starts a library song with the full library in the queue, independent of the visible search results. */
+    fun play(tracks: List<TrackEntity>, index: Int) {
+        val selected = tracks.getOrNull(index) ?: return
+        val library = this.tracks.value
+        val libraryIndex = library.indexOfFirst { it.id == selected.id }
+        check(libraryIndex >= 0) { "Song is no longer in the library" }
+        loadQueue(library, play = true, libraryIndex)
+    }
+
+    /** Starts a song from a playlist while keeping that playlist as the queue. */
+    fun playPlaylistSong(songs: List<TrackEntity>, index: Int) {
+        if (songs.isEmpty()) return
+        require(index in songs.indices) { "Playlist song index is out of range" }
+        loadQueue(songs, play = true, index)
+    }
 
     /** An album's or artist's Play (in order) and Shuffle buttons. */
     fun playAll(tracks: List<TrackEntity>, shuffle: Boolean) {
         if (tracks.isEmpty()) return
-        player.setShuffle(shuffle)
+        setShuffle(shuffle)
         play(tracks, if (shuffle) tracks.indices.random() else 0)
     }
 
@@ -479,7 +580,10 @@ class AppModel(
             message("This playlist has no available songs")
             return
         }
-        playAll(songs, shuffle)
+        if (songs.isNotEmpty()) {
+            setShuffle(shuffle)
+            loadQueue(songs, play = true, if (shuffle) songs.indices.random() else 0)
+        }
     }
 
     suspend fun exportM3u(
@@ -513,11 +617,12 @@ class AppModel(
         playlistId: Long,
         destination: String,
         includeLyrics: Boolean = true,
+        onProgress: (PlaylistBundleExportProgress) -> Unit = {},
     ) {
         val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
         val library = tracksDao.observeAll().first().associateBy { it.id }
         val songs = playlistsDao.itemsFor(playlistId).sortedBy { it.position }.mapNotNull { library[it.trackId] }
-        platform.writePlaylistBundle(destination, playlist.name, songs, playlist.coverPath, songs.firstOrNull(), includeLyrics)
+        platform.writePlaylistBundle(destination, playlist.name, songs, playlist.coverPath, songs.firstOrNull(), includeLyrics, onProgress)
         message("Exported ${playlist.name}")
     }
 
@@ -552,16 +657,19 @@ class AppModel(
         playlist.copy(id = id)
     }
 
-    suspend fun importPlaylistBundle(preview: PlaylistBundlePreview): PlaylistEntity = playlistLock.withLock {
+    suspend fun importPlaylistBundle(preview: PlaylistBundlePreview, name: String = preview.name): PlaylistEntity = playlistLock.withLock {
         var importFailure: Exception? = null
         try {
+            val cleanName = name.trim()
+            require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
+            val uniqueName = uniquePlaylistName(cleanName)
             val folder = settings.filterNotNull().first().musicFolder ?: throw IllegalStateException("Choose a music folder before importing a playlist")
             val newSongs = preview.songs.filter { it.existingTrack == null }
             val importedFiles = if (newSongs.isEmpty()) {
                 emptyList()
             } else {
                 platform.importSongs(
-                    preview.name,
+                    uniqueName,
                     folder,
                     newSongs.map { PlaylistImportFile(it.sourcePath, it.fileName, it.lyricsPath) },
                 )
@@ -589,9 +697,6 @@ class AppModel(
                     ?: importedBySource[song.sourcePath]?.let { byLocation[it.location]?.id }
                     ?: song.tags?.let { matchTrackByTags(it.title, it.artist, it.durationMs, library)?.id }
             }.distinct()
-            val cleanName = preview.name.trim()
-            require(cleanName.isNotEmpty()) { "Playlist name can't be empty" }
-            val uniqueName = uniquePlaylistName(cleanName)
             val playlist = PlaylistEntity(name = uniqueName, createdMs = platform.currentTimeMs())
             val items = trackIds.mapIndexed { index, trackId ->
                 PlaylistItemEntity(playlistId = 0, trackId = trackId, position = index)
@@ -756,6 +861,16 @@ class AppModel(
     }
 
     fun setShowLyrics(on: Boolean) = setFlag(AppSettings.SHOW_LYRICS, on)
+
+    fun setShuffle(enabled: Boolean) {
+        player.setShuffle(enabled)
+        put(AppSettings.SHUFFLE, enabled.toString())
+    }
+
+    fun setRepeatMode(mode: RepeatMode) {
+        player.setRepeatMode(mode)
+        put(AppSettings.REPEAT_MODE, mode.name)
+    }
 
     /**
      * The lyrics editor's play button for a song that isn't the current one: plays [track] from

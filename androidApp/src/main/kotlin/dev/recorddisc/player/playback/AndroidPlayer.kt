@@ -71,7 +71,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
 
         override fun onPlayerError(e: PlaybackException) {
             val c = controller ?: return
-            error = e.message ?: e.errorCodeName
+            error = "Playback failed (${e.errorCodeName})"
             failures++
             // Skip the broken song (also with repeat-one, which would otherwise retry it forever).
             if (failures < c.mediaItemCount && c.hasNextMediaItem()) {
@@ -103,7 +103,7 @@ class AndroidPlayer(context: Context) : MusicPlayer {
             val c = try {
                 future.get()
             } catch (e: Exception) {
-                error = "Can't connect to the playback service: ${e.message}"
+                error = "Can't connect to the playback service"
                 publish()
                 return@addListener
             }

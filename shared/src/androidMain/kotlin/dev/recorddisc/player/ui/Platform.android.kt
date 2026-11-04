@@ -1,8 +1,9 @@
 package dev.recorddisc.player.ui
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
-import android.os.Build
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -10,11 +11,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -27,13 +26,6 @@ actual fun rememberReduceMotion(): Boolean {
 
 @Composable
 actual fun PlatformBackHandler(enabled: Boolean, onBack: () -> Unit) = BackHandler(enabled, onBack)
-
-@Composable
-actual fun dynamicAccentColor(): Color? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
-    val context = LocalContext.current
-    return remember(context) { dynamicDarkColorScheme(context).primary }
-}
 
 @Composable
 actual fun systemPrefersDark(): Boolean = isSystemInDarkTheme()
@@ -62,4 +54,17 @@ actual fun decodeImage(bytes: ByteArray, maxSizePx: Int): ImageBitmap? {
     var sample = 1
     while (maxOf(w, h) / (sample * 2) >= maxSizePx) sample *= 2
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+}
+
+@Composable
+actual fun viewFileLocation(location: String, folder: String?) {
+    val context = LocalContext.current
+    val uri = Uri.parse(folder ?: location)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "*/*")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+    }
+    if (intent.resolveActivity(context.packageManager) != null) {
+        context.startActivity(intent)
+    }
 }

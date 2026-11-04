@@ -1,7 +1,6 @@
 package dev.recorddisc.player.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 
 /** True when the system asks for less motion (Android: animations turned off). */
@@ -11,10 +10,6 @@ expect fun rememberReduceMotion(): Boolean
 /** Handles the system Back gesture/button (Android); does nothing on desktop. */
 @Composable
 expect fun PlatformBackHandler(enabled: Boolean, onBack: () -> Unit)
-
-/** The wallpaper-based accent on Android 12+, or null where there is none. */
-@Composable
-expect fun dynamicAccentColor(): Color?
 
 /** True when the phone or desktop is set to dark mode (unknown → dark). */
 @Composable
@@ -29,3 +24,7 @@ expect fun imageSize(bytes: ByteArray): Pair<Int, Int>?
 
 /** Decodes an encoded image for display, scaled down so its longest side is at most [maxSizePx]. */
 expect fun decodeImage(bytes: ByteArray, maxSizePx: Int): ImageBitmap?
+
+/** Opens the containing folder of [location] in the system file manager. */
+@Composable
+expect fun viewFileLocation(location: String, folder: String?)

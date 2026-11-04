@@ -8,6 +8,9 @@ import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Density
 import androidx.room.Room
@@ -25,8 +28,12 @@ import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.FileEntry
 import dev.recorddisc.player.library.LibraryDatabase
 import dev.recorddisc.player.library.LibrarySource
+import dev.recorddisc.player.library.PlaylistBundlePreview
+import dev.recorddisc.player.library.PlaylistBundlePreviewSong
+import dev.recorddisc.player.library.PlaylistTextFile
 import dev.recorddisc.player.library.TrackTags
 import dev.recorddisc.player.playback.PlaybackState
+import dev.recorddisc.player.playback.RepeatMode
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -41,7 +48,10 @@ import org.jetbrains.skia.EncodedImageFormat
 import org.junit.After
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
 
 /**
  * Renders the real desktop UI off-screen with the mockups' sample songs and saves PNGs to
@@ -93,6 +103,25 @@ class DesktopScreenshotTest {
         override fun folderLabel(folder: String) = folder.replace("/home/you", "~")
         override suspend fun loadArtwork(location: String, maxSizePx: Int): ImageBitmap? =
             songs.firstOrNull { location.endsWith("${it.title}.flac") }?.let { gradientArt(it.colors, maxSizePx) }
+        override suspend fun readPlaylistText(location: String) =
+            PlaylistTextFile("Imported Mix.m3u8", "#EXTM3U\nmissing-track.flac")
+        override suspend fun readPlaylistBundle(location: String, library: List<TrackEntity>) =
+            PlaylistBundlePreview(
+                name = "Imported Bundle",
+                songs = listOf(
+                    PlaylistBundlePreviewSong(
+                        sourcePath = "/tmp/mock-bundle/Midnight Drive.flac",
+                        fileName = "Midnight Drive.flac",
+                        lyricsPath = "/tmp/mock-bundle/Midnight Drive.lrc",
+                        tags = TrackTags(title = "Midnight Drive", artist = "Neon Coast", durationMs = 222_000),
+                        existingTrack = library.firstOrNull(),
+                        warning = null,
+                    ),
+                ),
+                coverBytes = byteArrayOf(1),
+                coverExtension = "png",
+                temporaryDirectory = "/tmp/mock-bundle",
+            )
         override fun sourceFor(folder: String) = object : LibrarySource {
             var read = 0
             override suspend fun listFiles() = songs.map { FileEntry("$folder/${it.artist}/${it.title}.flac", "${it.title}.flac", 100, 1) }
@@ -112,15 +141,80 @@ class DesktopScreenshotTest {
 
     private fun <T> StateFlow<T>.await(check: (T) -> Boolean): T = runBlocking { withTimeout(5_000) { first(check) } }
 
+    private fun scene(
+        model: AppModel,
+        view: DesktopView = DesktopView.Home,
+        playlistId: Long? = null,
+        playlistActions: PlaylistFileActions = PlaylistFileActions(),
+    ) = ImageComposeScene(1440, 852, Density(1f)) {
+        DesktopApp(
+            model,
+            chooseFolder = { null },
+            startView = view,
+            appVersion = "0.1.0",
+            playlistActions = playlistActions,
+            startPlaylistId = playlistId,
+        )
+    }
+
+    private fun SemanticsNode.descendants(): List<SemanticsNode> = buildList {
+        add(this@descendants)
+        children.forEach { addAll(it.descendants()) }
+    }
+
+    private fun nodes(scene: ImageComposeScene): List<SemanticsNode> =
+        scene.semanticsOwners.flatMap { it.rootSemanticsNode.descendants() }
+
+    private fun nodeWithText(scene: ImageComposeScene, text: String): SemanticsNode? =
+        nodes(scene).firstOrNull { node ->
+            node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == text }
+        }
+
+    private fun click(scene: ImageComposeScene, text: String) {
+        settle(scene)
+        val node = assertNotNull(
+            nodes(scene).firstOrNull { candidate ->
+                val labels = candidate.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text }
+                val descriptions = candidate.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }
+                val actionLabel = if (candidate.config.contains(SemanticsActions.OnClick)) candidate.config[SemanticsActions.OnClick].label else null
+                text in labels || text in descriptions || actionLabel == text
+            },
+            "No visible semantics node for '$text': " + nodes(scene).mapNotNull { candidate ->
+                val actionLabel = if (candidate.config.contains(SemanticsActions.OnClick)) candidate.config[SemanticsActions.OnClick].label else null
+                val labels = candidate.config.getOrElse(SemanticsProperties.Text) { emptyList() }.map { it.text }
+                (labels + listOfNotNull(actionLabel)).takeIf { it.isNotEmpty() }?.joinToString()
+            }.distinct().joinToString(" | "),
+        )
+        assertTrue(node.config.contains(SemanticsActions.OnClick), "Text '$text' is not clickable")
+        val click = node.config[SemanticsActions.OnClick]
+        assertNotNull(click.action, "Text '$text' has no click action").invoke()
+        settle(scene)
+    }
+
+    private fun settle(scene: ImageComposeScene) {
+        repeat(8) { frame ->
+            Thread.sleep(25)
+            scene.render((frame + 1) * 33_000_000L)
+        }
+    }
+
+    private fun capture(scene: ImageComposeScene, name: String) {
+        val image = scene.render(3_000_000_000L)
+        val png = image.encodeToData(EncodedImageFormat.PNG)!!.bytes
+        File(out, "$name.png").writeBytes(png)
+        assertTrue(png.size > 10_000, "$name rendered")
+    }
+
     /** Draws a few seconds of frames (so the disc is mid-spin), then saves the last one. */
     private fun shoot(
         model: AppModel, name: String, width: Int = 1440, height: Int = 852, view: DesktopView = DesktopView.Home,
         library: LibraryNav? = null, picker: Boolean = false, editor: Boolean = false, lyricsEditor: Boolean = false,
+        playlistId: Long? = null,
     ) {
         val scene = ImageComposeScene(width, height, Density(1f)) {
             DesktopApp(
                 model, chooseFolder = { null }, startView = view, startLibrary = library, appVersion = "0.1.0",
-                startAccentPicker = picker, startEditor = editor, startLyricsEditor = lyricsEditor,
+                startAccentPicker = picker, startEditor = editor, startLyricsEditor = lyricsEditor, startPlaylistId = playlistId,
             )
         }
         try {
@@ -139,6 +233,66 @@ class DesktopScreenshotTest {
 
     private fun model(platform: LibraryPlatform, player: FakePlayer = FakePlayer()) = AppModel(db, player, platform, scope).also {
         it.settings.await { s -> s != null }
+    }
+
+    @Test
+    fun lyricsEditorRepeatsCurrentTrackAndRestoresPreviousRepeatModeWhenClosed() {
+        val platform = MockupPlatform()
+        val player = FakePlayer()
+        val model = model(platform, player)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        player.state.value = PlaybackState(tracks.map { it.toQueueItem() }, index = 0, isPlaying = true, repeatMode = RepeatMode.All)
+
+        val editor = ImageComposeScene(1440, 852, Density(1f)) {
+            DesktopApp(model, chooseFolder = { null }, startLyricsEditor = true)
+        }
+        try {
+            settle(editor)
+            assertNotNull(nodeWithText(editor, "Edit lyrics"), "lyrics editor is visible")
+            assertEquals(RepeatMode.One, player.state.value.repeatMode, "the lyrics editor repeats the current song")
+            assertTrue(player.state.value.isPlaying, "opening the lyrics editor does not pause playback")
+            click(editor, "Pause")
+            assertFalse(player.state.value.isPlaying, "playback can pause in the lyrics editor")
+            click(editor, "Play")
+            assertTrue(player.state.value.isPlaying, "playback can resume in the lyrics editor")
+        } finally {
+            editor.close()
+        }
+        assertEquals(RepeatMode.All, player.state.value.repeatMode, "closing the lyrics editor restores the previous repeat mode")
+        assertTrue(player.state.value.isPlaying, "closing the lyrics editor does not pause playback")
+    }
+
+    @Test
+    fun playlistDetailsShufflePlayStartsThePlaylistInShuffleMode() {
+        val platform = MockupPlatform()
+        val player = FakePlayer()
+        val model = model(platform, player)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        val playlist = runBlocking { model.createPlaylist("Shuffle Test") }
+        tracks.take(3).forEach { track -> runBlocking { model.addToPlaylist(playlist.id, track.id) } }
+        model.playlists.await { entries -> entries.firstOrNull { it.id == playlist.id }?.songs?.size == 3 }
+
+        val screen = ImageComposeScene(1440, 852, Density(1f)) {
+            DesktopApp(model, chooseFolder = { null }, startView = DesktopView.Playlists, startPlaylistId = playlist.id)
+        }
+        try {
+            settle(screen)
+            assertNotNull(nodeWithText(screen, "Shuffle Play"), "playlist detail exposes Shuffle Play")
+            click(screen, "Shuffle Play")
+            val started = player.state.await { it.queue.size == 3 && it.isPlaying }
+            assertTrue(player.shuffleOn, "Shuffle Play enables shuffle mode")
+            assertEquals(tracks.take(3).map { it.id }.toSet(), started.queue.map { it.id }.toSet())
+        } finally {
+            screen.close()
+        }
     }
 
     @Test
@@ -164,6 +318,14 @@ class DesktopScreenshotTest {
         model.finishSetup()
         model.settings.await { it?.setupDone == true }
         val tracks = model.tracks.await { it.size == 4 }
+        val roadTrip = runBlocking {
+            model.createPlaylist("Road Trip").also { playlist ->
+                tracks.take(3).forEach { model.addToPlaylist(playlist.id, it.id) }
+            }
+        }
+        model.playlists.await { playlists -> playlists.any { it.id == roadTrip.id && it.songCount == 3 } }
+        shoot(model, "34-playlists", view = DesktopView.Playlists)
+        shoot(model, "35-playlist-detail", view = DesktopView.Playlists, playlistId = roadTrip.id)
         val queue = tracks.sortedBy { t -> songs.indexOfFirst { it.title == t.title } }.map { it.toQueueItem() }
         player.state.value = PlaybackState(queue, index = 0, isPlaying = true, positionMs = 42_000, durationMs = 222_000, volume = 0.72f)
         shoot(model, "04-home")
@@ -214,6 +376,115 @@ class DesktopScreenshotTest {
         model.setAccent(AccentPreset.Mint)
         model.settings.await { it?.accent == AccentPreset.Mint }
         shoot(model, "25-light-home-mint")
+    }
+
+    @Test
+    fun playlistDialogs() {
+        val platform = MockupPlatform()
+        val model = model(platform)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        val playlist = runBlocking {
+            model.createPlaylist("Road Trip").also { created ->
+                tracks.take(2).forEach { model.addToPlaylist(created.id, it.id) }
+            }
+        }
+        model.playlists.await { playlists -> playlists.any { it.id == playlist.id && it.songCount == 2 } }
+
+        val addScene = scene(model, view = DesktopView.Library)
+        try {
+            click(addScene, "More options")
+            click(addScene, "Add to playlist")
+            capture(addScene, "36-add-to-playlist")
+        } finally {
+            addScene.close()
+        }
+
+        val exportScene = scene(model, view = DesktopView.Playlists, playlistId = playlist.id)
+        try {
+            click(exportScene, "Export")
+            capture(exportScene, "37-export-m3u8-options")
+            click(exportScene, "Record Disc")
+            capture(exportScene, "38-export-record-disc-options")
+        } finally {
+            exportScene.close()
+        }
+
+        val importScene = scene(
+            model,
+            view = DesktopView.Playlists,
+            playlistActions = PlaylistFileActions(openM3u = { done -> done("mock.m3u8") }),
+        )
+        try {
+            click(importScene, "Import")
+            click(importScene, "M3U8")
+            var frames = 0
+            while (nodeWithText(importScene, "Review M3U8") == null && frames < 40) {
+                settle(importScene)
+                frames++
+            }
+            assertNotNull(nodeWithText(importScene, "Review M3U8"), "M3U8 import review opens")
+            capture(importScene, "39-import-m3u8-review")
+        } finally {
+            importScene.close()
+        }
+
+        val bundleImportScene = scene(
+            model,
+            view = DesktopView.Playlists,
+            playlistActions = PlaylistFileActions(openBundle = { done -> done("mock.rdplaylist") }),
+        )
+        try {
+            click(bundleImportScene, "Import")
+            click(bundleImportScene, "Record Disc")
+            var frames = 0
+            while (nodeWithText(bundleImportScene, "Review Record Disc") == null && frames < 40) {
+                settle(bundleImportScene)
+                frames++
+            }
+            assertNotNull(nodeWithText(bundleImportScene, "Review Record Disc"), "Record Disc import review opens")
+            capture(bundleImportScene, "40-import-record-disc-review")
+        } finally {
+            bundleImportScene.close()
+        }
+    }
+
+    @Test
+    fun playlistAddActionsOpenLibrary() {
+        val platform = MockupPlatform()
+        val model = model(platform)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val emptyPlaylist = runBlocking { model.createPlaylist("Empty Mix") }
+        model.playlists.await { playlists -> playlists.any { it.id == emptyPlaylist.id } }
+
+        val emptyStateScene = scene(model, view = DesktopView.Playlists, playlistId = emptyPlaylist.id)
+        try {
+            click(emptyStateScene, "Add songs to this playlist from your Library ›")
+            assertNotNull(
+                nodeWithText(emptyStateScene, "LOCAL LIBRARY"),
+                "empty-playlist action opens Library",
+            )
+        } finally {
+            emptyStateScene.close()
+        }
+
+        val optionsScene = scene(model, view = DesktopView.Playlists, playlistId = emptyPlaylist.id)
+        try {
+            click(optionsScene, "⋮")
+            click(optionsScene, "Add songs to playlist")
+            assertNotNull(
+                nodeWithText(optionsScene, "LOCAL LIBRARY"),
+                "playlist option opens Library",
+            )
+        } finally {
+            optionsScene.close()
+        }
     }
 
     @Test

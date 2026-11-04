@@ -38,9 +38,12 @@ internal class FakePlayer : MusicPlayer {
     override fun seekTo(positionMs: Long) {
         state.value = state.value.copy(positionMs = positionMs)
     }
-    override fun setRepeatMode(mode: RepeatMode) = Unit
+    override fun setRepeatMode(mode: RepeatMode) { state.value = state.value.copy(repeatMode = mode) }
     var shuffleOn = false
-    override fun setShuffle(enabled: Boolean) { shuffleOn = enabled }
+    override fun setShuffle(enabled: Boolean) {
+        shuffleOn = enabled
+        state.value = state.value.copy(shuffle = enabled)
+    }
     override fun setVolume(volume: Float) = Unit
     /** (item, reload, play) for each [updateItem] call. */
     val updates = ArrayList<Triple<QueueItem, Boolean, Boolean>>()

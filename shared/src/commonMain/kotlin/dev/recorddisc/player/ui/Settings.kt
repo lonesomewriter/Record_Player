@@ -176,7 +176,7 @@ private val RAINBOW = listOf(Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00F
 
 /** The name under "Accent color". */
 fun AppSettings.accentName(dynamicOn: Boolean): String = when {
-    dynamicOn -> "From your wallpaper"
+    dynamicOn -> "Cover art"
     accent == null -> "Custom"
     else -> accent.name
 }
@@ -302,8 +302,7 @@ private fun HueBar(hue: Float, onChange: (Float) -> Unit) {
 @Composable
 fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Unit, onCustomAccent: () -> Unit) {
     val settings = model.settings.collectAsState().value ?: return
-    val dynamicSupported = dynamicAccentColor() != null
-    val dynamicOn = settings.dynamicColor && dynamicSupported
+    val dynamicOn = settings.dynamicColor
     val (rescan, scanning) = rescanLabel(model)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 96.dp)) {
         Row(Modifier.padding(bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -315,8 +314,8 @@ fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Uni
         SettingRow("Accent color", settings.accentName(dynamicOn)) {
             AccentSwatches(model, settings, dynamicOn, 26.dp, 5.dp, onCustomAccent)
         }
-        SettingRow("Dynamic color", if (dynamicSupported) "Android 12+" else "Needs Android 12 or newer", divider = false) {
-            SettingSwitch(dynamicOn, "Dynamic color", enabled = dynamicSupported) { model.setFlag(AppSettings.DYNAMIC_COLOR, it) }
+        SettingRow("Dynamic color", "From current cover art", divider = false) {
+            SettingSwitch(dynamicOn, "Dynamic color", enabled = true) { model.setFlag(AppSettings.DYNAMIC_COLOR, it) }
         }
         SettingsSectionLabel("Library", Modifier.padding(top = 22.dp))
         SettingRow("Music folder", settings.musicFolder?.let(model.platform::folderLabel)) { SmallButton("Change", enabled = !scanning, onClick = onChooseFolder) }
@@ -388,7 +387,7 @@ fun DesktopSettings(model: AppModel, narrow: Boolean, appVersion: String, choose
     }
     val about: @Composable (Modifier) -> Unit = { m ->
         SettingsCard("About", m) {
-            SettingRow("Record Disc Desktop", textSize = 13) { Text(appVersion, color = disc.muted, fontSize = 11.sp) }
+            SettingRow("Record Player Desktop", textSize = 13) { Text(appVersion, color = disc.muted, fontSize = 11.sp) }
             val formats = tracks.map { it.format.uppercase() }.distinct().sorted().joinToString(", ").ifEmpty { "—" }
             SettingRow("Library format", textSize = 13) { Text("Local · $formats", color = disc.muted, fontSize = 11.sp, textAlign = TextAlign.End) }
             SettingRow("Privacy", "No account, no telemetry", divider = false, textSize = 13) {
