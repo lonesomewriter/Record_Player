@@ -8,6 +8,9 @@ Before responding to the user or taking any action, you MUST read these files in
 
 1. `project-guidelines/implementation.md`
 2. `project-guidelines/security.md`
+3. `project-guidelines/documentation.md`
+
+Then review the most recent dated folder under `project-changelog/` (and any newer entries) so you have the current project status before acting.
 
 Use your file-reading tool. If your environment cannot read files, stop and ask the project manager to paste their contents. Do not proceed without them.
 

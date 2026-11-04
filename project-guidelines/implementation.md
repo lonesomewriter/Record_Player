@@ -45,3 +45,6 @@
 ## Open Source and Privacy
 * Whenever the User or AI-Agent(s) choose their resources, dependencies and or third party services. ALWAYS look into the telemetry behind it. Look for an application that respects the privacy of the consumer(s), whilst still being structurally sound and firm in it's Security.
 * When implementing third party packages or any resource, always examine the code. Never  take it at face value. Look for any traces of telemetry or tracking  related functions/programs. 
+
+## Permission Errors
+* Whenever a command requires root permission, inform the user they'll have to run said command themselves

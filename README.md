@@ -1,6 +1,6 @@
 # Music_Player
 
-An offline music player for Android and Linux desktop, built with Kotlin and Compose Multiplatform. Working name: "Record Disc".
+Record Player is an offline music player for Android and Linux desktop, built with Kotlin and Compose Multiplatform.
 
 No accounts, ads, analytics or network access.
 
@@ -22,14 +22,15 @@ No accounts, ads, analytics or network access.
   ```
 - **`gdbus` on Linux** (package `libglib2.0-bin`, usually preinstalled) lets Settings → Theme → System follow the desktop's dark/light setting. Without it, System uses Dark.
 
-## Playlist transfer formats
+## Playlists
 
-The playlist data layer supports two offline export formats:
+Playlists are saved locally and can be created, renamed, deleted, reordered and played on both platforms. Songs can be added from the Library or Now Playing menus; duplicate additions are refused. Custom playlist covers fall back to the first song's cover when unset.
 
-- **M3U8** is a text playlist with relative or full paths and optional track information. Import matches library songs by path, then by title, artist and duration.
-- **`.rdplaylist`** is a standard ZIP containing a playlist, unchanged audio files, optional `.lrc` lyrics and a cover. Import checks archive paths and sizes before extracting, then copies new songs under `Music/Imported/<playlist>/`.
+- **M3U8** exports relative or full paths and optional track information. Import matches songs by path, then by title, artist and duration.
+- **`.rdplaylist`** is a standard ZIP containing the playlist, unchanged audio files, optional `.lrc` lyrics and a cover. Import validates archive paths and sizes before extraction, reuses songs already in the library, and copies new songs under `Music/Imported/<playlist>/`.
+- Android uses the Storage Access Framework; Linux uses native file dialogs. Export and import options are available from the playlist screen.
 
-The playlist screens and file pickers are still being built, so these formats are not yet available from the app UI.
+The Android end-to-end import/export walkthrough still needs to be completed on a device or emulator. Converting a playlist into one audio file remains out of scope pending format and encoder research.
 
 ## Common commands
 
