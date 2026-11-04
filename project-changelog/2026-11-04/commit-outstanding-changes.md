@@ -17,3 +17,7 @@
 ## Impacts
 - Repository history no longer has uncommitted work. Build binaries (62 MB `.deb`, 21 MB `.apk`) stay out of the public repo to avoid permanent history bloat.
 - No new environment variables, so `.env_example` is unchanged.
+
+## Push to main
+- **Time:** 2026-11-04, ~13:20 UTC. **Approved By:** Project manager
+- Fast-forwarded `origin/main` from `e2b4206` to `dcb123b` (4 commits, including `cfc3b42`), and synced `origin/ui` to match. No force push and no merge commit.
