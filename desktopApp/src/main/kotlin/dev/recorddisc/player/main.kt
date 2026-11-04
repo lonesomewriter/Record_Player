@@ -10,17 +10,22 @@ import dev.recorddisc.player.app.DesktopLibraryPlatform
 import dev.recorddisc.player.library.DesktopPaths
 import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.playback.DesktopPlayer
+import dev.recorddisc.player.playback.MuteAutoPause
 import dev.recorddisc.player.playback.OutputMonitor
+import dev.recorddisc.player.playback.SystemMuteMonitor
 import dev.recorddisc.player.ui.DesktopApp
 import dev.recorddisc.player.ui.EditorActions
 import dev.recorddisc.player.ui.PlaylistCoverFile
 import dev.recorddisc.player.ui.PlaylistFileActions
+import dev.recorddisc.player.ui.SystemAccentMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.awt.Dimension
@@ -43,12 +48,29 @@ fun main() {
     val outputs = runCatching {
         OutputMonitor { if (model.settings.value?.pauseOnUnplug == true && player.state.value.isPlaying) player.pause() }
     }.getOrNull()
+    // Settings → Pause when muted / Resume when unmuted: the system output muted or at 0 (via pactl,
+    // when present), or the app's own volume slider at 0.
+    val systemMute = runCatching { SystemMuteMonitor() }.getOrNull()
+    scope.launch {
+        MuteAutoPause(
+            muted = combine(systemMute?.muted ?: flowOf(false), player.state.map { it.volume <= 0f }) { system, slider -> system || slider },
+            isPlaying = player.state.map { it.isPlaying },
+            playingNow = { player.state.value.isPlaying },
+            settings = { model.settings.value },
+            pause = player::pause,
+            play = player::play,
+        ).run()
+    }
+    // Settings → Use system accent: the desktop's accent colour, when it shares one.
+    val systemAccent = runCatching { SystemAccentMonitor() }.getOrNull()
 
     application {
         Window(
             onCloseRequest = {
                 scope.cancel()
                 outputs?.close()
+                systemMute?.close()
+                systemAccent?.close()
                 player.release()
                 exitApplication()
             },
@@ -93,6 +115,7 @@ fun main() {
                 appVersion = version,
                 editor = editor,
                 playlistActions = playlistFiles,
+                systemAccent = systemAccent?.accent,
             )
         }
     }

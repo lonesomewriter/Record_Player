@@ -3,7 +3,10 @@ package dev.recorddisc.player.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,8 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,6 +52,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -65,8 +80,10 @@ import dev.recorddisc.player.library.displayTitle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 data class PlaylistCoverFile(val name: String, val bytes: ByteArray)
 
@@ -99,9 +116,21 @@ fun PlaylistHost(model: AppModel, content: @Composable () -> Unit) {
     }
 }
 
+/** Android Playlists. [selectedId] is the open playlist, kept by the caller so Now Playing can return to it. */
 @Composable
-fun PhonePlaylists(model: AppModel, actions: PlaylistFileActions, onBack: () -> Unit, onOpenLibrary: () -> Unit) {
-    PlaylistScreen(model, actions, desktop = false, onBack = onBack, onOpenLibrary = onOpenLibrary)
+fun PhonePlaylists(
+    model: AppModel,
+    actions: PlaylistFileActions,
+    selectedId: Long?,
+    onSelect: (Long?) -> Unit,
+    onPlayed: (playlistId: Long) -> Unit,
+    onBack: () -> Unit,
+    onOpenLibrary: () -> Unit,
+) {
+    PlaylistScreen(
+        model, actions, desktop = false, selectedId = selectedId, onSelect = onSelect,
+        onBack = onBack, onPlayed = onPlayed, onOpenLibrary = onOpenLibrary,
+    )
 }
 
 @Composable
@@ -236,6 +265,7 @@ private fun PlaylistScreen(
     selectedId: Long? = null,
     onSelect: (Long?) -> Unit = {},
     onBack: () -> Unit = {},
+    onPlayed: (playlistId: Long) -> Unit = {},
     onOpenLibrary: () -> Unit,
 ) {
     val playlists by model.playlists.collectAsState()
@@ -253,8 +283,9 @@ private fun PlaylistScreen(
         pageId = null
         onSelect(null)
     }
+    // Both layouts own the open playlist outside this screen, so Now Playing can return to it.
     LaunchedEffect(selectedId) {
-        if (desktop) pageId = selectedId
+        pageId = selectedId
     }
 
     fun fail(message: String) {
@@ -335,12 +366,14 @@ private fun PlaylistScreen(
                 model = model,
                 playlist = current,
                 desktop = desktop,
-                onPlay = { action { model.playPlaylist(current.id) } },
-                onShufflePlay = { action { model.playPlaylist(current.id, shuffle = true) } },
+                // Play / Shuffle Play only play; they don't open Now Playing (2026-11-04 mockups).
+                onPlay = { action { model.playPlaylist(current.id) }; onPlayed(current.id) },
+                onShufflePlay = { action { model.playPlaylist(current.id, shuffle = true) }; onPlayed(current.id) },
                 onExport = { exportFor = current },
                 onSoon = { model.message("To audio file is coming later") },
                 onRemove = { track -> action { model.removeFromPlaylist(current.id, track.id) } },
-                onMove = { track, direction -> action { model.movePlaylistTrack(current.id, track.id, direction) } },
+                onMoveTo = { track, to -> action { model.movePlaylistTrackTo(current.id, track.id, to) } },
+                onPlaySong = { songs, index -> model.playPlaylistSong(songs, index); onPlayed(current.id) },
                 onOpenLibrary = onOpenLibrary,
             )
         }
@@ -351,8 +384,7 @@ private fun PlaylistScreen(
             nameDialog = null
             action {
                 val playlist = if (dialog.playlistId == null) model.createPlaylist(name) else model.renamePlaylist(dialog.playlistId, name)
-                if (dialog.playlistId == null && !desktop) pageId = playlist.id
-                if (dialog.playlistId == null && desktop) {
+                if (dialog.playlistId == null) {
                     pageId = playlist.id
                     onSelect(playlist.id)
                 }
@@ -532,10 +564,16 @@ private fun PlaylistDetail(
     onExport: () -> Unit,
     onSoon: () -> Unit,
     onRemove: (TrackEntity) -> Unit,
-    onMove: (TrackEntity, Int) -> Unit,
+    onMoveTo: (TrackEntity, Int) -> Unit,
+    onPlaySong: (List<TrackEntity>, Int) -> Unit,
     onOpenLibrary: () -> Unit,
 ) {
-    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 110.dp)) {
+    // Dropping a song reorders this local copy at once, so the row doesn't jump back while the
+    // database catches up; a fresh list from the database replaces it.
+    var songs by remember(playlist.songs) { mutableStateOf(playlist.songs) }
+    val listState = rememberLazyListState()
+    val reorder = remember(playlist.id) { PlaylistReorder() }
+    LazyColumn(modifier, state = listState, contentPadding = PaddingValues(bottom = 110.dp)) {
         item(key = "hero") {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 PlaylistArtwork(model, playlist, if (desktop) 150.dp else 116.dp)
@@ -564,20 +602,68 @@ private fun PlaylistDetail(
                     color = disc.accentReadable,
                     fontSize = 13.sp,
                 )
+            } else if (desktop) {
+                Text(
+                    "Hold a song, then drag it to reorder. Use ⋮ for song options.",
+                    Modifier.padding(start = 8.dp, bottom = 6.dp), color = disc.muted, fontSize = 11.sp,
+                )
             }
         }
-        itemsIndexed(playlist.songs, key = { _, track -> track.id }) { index, track ->
+        itemsIndexed(songs, key = { _, track -> track.id }) { index, track ->
             PlaylistSongRow(
-                model,
-                track,
-                desktop,
-                onPlay = { model.playPlaylistSong(playlist.songs, index) },
-                canMoveUp = index > 0,
-                canMoveDown = index < playlist.songs.lastIndex,
+                model, track, index, songs.size, reorder, listState,
+                onPlay = { onPlaySong(songs, index) },
                 onRemove = { onRemove(track) },
-                onMoveUp = { onMove(track, -1) },
-                onMoveDown = { onMove(track, 1) },
+                onDrop = { to ->
+                    songs = songs.toMutableList().apply { add(to, removeAt(index)) }
+                    onMoveTo(track, to)
+                },
             )
+        }
+    }
+}
+
+/**
+ * Hold-and-drag state for one playlist page: which row is lifted, how far it has moved, and
+ * where it would land. The other rows slide aside by one row height to show the gap.
+ */
+@Stable
+private class PlaylistReorder {
+    var draggingId by mutableStateOf<Long?>(null)
+        private set
+    var dragY by mutableFloatStateOf(0f)
+    var from by mutableIntStateOf(0)
+        private set
+    var stepPx by mutableFloatStateOf(0f)
+    var count = 0
+        private set
+    /** The release after a drag isn't a tap, so it mustn't play the song. */
+    var suppressClick = false
+
+    val target: Int
+        get() = if (stepPx <= 0f) from else (from + (dragY / stepPx).roundToInt()).coerceIn(0, count - 1)
+
+    fun start(id: Long, index: Int, size: Int) {
+        draggingId = id; from = index; count = size; dragY = 0f; suppressClick = true
+    }
+
+    fun end() {
+        draggingId = null; dragY = 0f
+    }
+
+    /** Keeps the lifted row within the list. */
+    fun clampDrag() {
+        dragY = dragY.coerceIn(-from * stepPx, (count - 1 - from) * stepPx)
+    }
+
+    /** How far a non-lifted row at [index] slides to make room. */
+    fun shiftFor(index: Int): Float {
+        if (draggingId == null) return 0f
+        val to = target
+        return when {
+            index in (from + 1)..to -> -stepPx
+            index in to until from -> stepPx
+            else -> 0f
         }
     }
 }
@@ -586,31 +672,74 @@ private fun PlaylistDetail(
 private fun PlaylistSongRow(
     model: AppModel,
     track: TrackEntity,
-    desktop: Boolean,
+    index: Int,
+    count: Int,
+    reorder: PlaylistReorder,
+    listState: LazyListState,
     onPlay: () -> Unit,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
     onRemove: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
+    onDrop: (Int) -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
-    var dragAmount by remember { mutableStateOf(0f) }
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val reduceMotion = rememberReduceMotion()
+    val lifted = reorder.draggingId == track.id
+    val shift by animateFloatAsState(
+        if (lifted) 0f else reorder.shiftFor(index),
+        if (reduceMotion || reorder.draggingId == null) snap() else tween(180),
+        label = "rowShift",
+    )
+    val shape = RoundedCornerShape(12.dp)
+    val edge = with(LocalDensity.current) { 56.dp.toPx() }
     Row(
         Modifier.fillMaxWidth()
-            .then(if (desktop) Modifier.pointerInput(track.id) {
-                detectDragGestures(
-                    onDragStart = { dragAmount = 0f },
-                    onDragEnd = {
-                        when {
-                            dragAmount < -28.dp.toPx() -> onMoveUp()
-                            dragAmount > 28.dp.toPx() -> onMoveDown()
-                        }
+            .onSizeChanged { reorder.stepPx = it.height.toFloat() }
+            .zIndex(if (lifted) 1f else 0f)
+            .graphicsLayer { translationY = if (lifted) reorder.dragY else shift }
+            // Hold (touch or mouse), then drag: a quick tap still plays the song.
+            .pointerInput(track.id, index, count) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        reorder.start(track.id, index, count)
                     },
-                    onDrag = { change, amount -> change.consume(); dragAmount += amount.y },
+                    onDragEnd = {
+                        val to = reorder.target
+                        reorder.end()
+                        if (to != index) {
+                            onDrop(to)
+                            model.message("Moved to position ${to + 1}")
+                        }
+                        scope.launch { delay(400); reorder.suppressClick = false }
+                    },
+                    onDragCancel = {
+                        reorder.end()
+                        scope.launch { delay(400); reorder.suppressClick = false }
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        reorder.dragY += amount.y
+                        // Near the top or bottom of the list, scroll it and keep the row under the pointer.
+                        val info = listState.layoutInfo
+                        val item = info.visibleItemsInfo.firstOrNull { it.key == track.id }
+                        if (item != null) {
+                            val top = item.offset + reorder.dragY
+                            val delta = when {
+                                top < info.viewportStartOffset + edge -> -12f
+                                top + item.size > info.viewportEndOffset - edge -> 12f
+                                else -> 0f
+                            }
+                            if (delta != 0f) reorder.dragY += listState.dispatchRawDelta(delta)
+                        }
+                        reorder.clampDrag()
+                    },
                 )
-            } else Modifier)
-            .padding(vertical = 2.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onPlay).padding(horizontal = 8.dp, vertical = 8.dp),
+            }
+            .padding(vertical = 2.dp)
+            .then(if (lifted) Modifier.shadow(12.dp, shape).border(1.dp, disc.accent.copy(alpha = 0.5f), shape).background(disc.panel2, shape) else Modifier)
+            .clip(shape)
+            .clickable(onClickLabel = "Play ${track.displayTitle}") { if (!reorder.suppressClick) onPlay() }
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         ArtThumb(model.artwork, track.location, 42.dp, 9.dp)
@@ -619,14 +748,7 @@ private fun PlaylistSongRow(
             Text(listOfNotNull(track.artist, track.album).joinToString(" · ").ifEmpty { "Unknown artist" }, color = disc.muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(formatTime(track.durationMs), color = disc.muted, fontSize = 10.sp)
-        Box {
-            Text("⋮", Modifier.clickable { menu = true }.padding(horizontal = 7.dp), color = disc.muted, fontSize = 18.sp)
-            DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Remove from playlist") }, onClick = { menu = false; onRemove() })
-                DropdownMenuItem(enabled = canMoveUp, text = { Text("Move up") }, onClick = { menu = false; onMoveUp() })
-                DropdownMenuItem(enabled = canMoveDown, text = { Text("Move down") }, onClick = { menu = false; onMoveDown() })
-            }
-        }
+        SongMenuButton(track, onRemoveFromPlaylist = onRemove)
     }
 }
 

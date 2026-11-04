@@ -554,6 +554,30 @@ class AppModel(
         true
     }
 
+    /**
+     * Hold-and-drag reordering: moves [trackId] to [toIndex] among the songs that are currently in
+     * the library (the ones the playlist page shows). Rows for missing songs keep their place
+     * relative to their neighbours, and positions are renumbered without gaps. Returns false
+     * when nothing moved.
+     */
+    suspend fun movePlaylistTrackTo(playlistId: Long, trackId: Long, toIndex: Int): Boolean = playlistLock.withLock {
+        check(playlistsDao.get(playlistId) != null) { "Playlist not found" }
+        val items = playlistsDao.itemsFor(playlistId)
+        val libraryIds = tracksDao.observeAll().first().mapTo(HashSet()) { it.id }
+        val visible = items.filter { it.trackId in libraryIds }
+        val from = visible.indexOfFirst { it.trackId == trackId }
+        if (from < 0) return@withLock false
+        val to = toIndex.coerceIn(0, visible.lastIndex)
+        if (to == from) return@withLock false
+        val moving = visible[from]
+        val anchor = visible[to]
+        val reordered = items.filterNot { it.id == moving.id }.toMutableList()
+        val anchorAt = reordered.indexOfFirst { it.id == anchor.id }
+        reordered.add(if (to > from) anchorAt + 1 else anchorAt, moving)
+        playlistsDao.updateItems(reordered.mapIndexedNotNull { i, item -> if (item.position == i) null else item.copy(position = i) })
+        true
+    }
+
     suspend fun setPlaylistCover(playlistId: Long, fileName: String, bytes: ByteArray) = playlistLock.withLock {
         val playlist = playlistsDao.get(playlistId) ?: throw NoSuchElementException("Playlist not found")
         require(bytes.isNotEmpty() && bytes.size <= TagRules.MAX_COVER_BYTES) { "Cover image must be 10 MB or smaller" }

@@ -513,6 +513,34 @@ class AppModelTest {
     }
 
     @Test
+    fun dragReorderMovesASongToAnyPositionAndRenumbers() = runBlocking {
+        val platform = FakePlatform()
+        val db = database(File(tmp.root, "drag-reorder.db"))
+        val model = readyModel(db, FakePlayer(), platform)
+        val songs = model.tracks.value
+        val playlist = model.createPlaylist("Reorder")
+        for (song in songs.take(3)) model.addToPlaylist(playlist.id, song.id)
+        suspend fun order() = db.playlists().itemsFor(playlist.id).map { it.trackId }
+
+        assertTrue(model.movePlaylistTrackTo(playlist.id, songs[0].id, 2), "first to last")
+        assertEquals(listOf(songs[1].id, songs[2].id, songs[0].id), order())
+        assertTrue(model.movePlaylistTrackTo(playlist.id, songs[0].id, 0), "last to first")
+        assertEquals(listOf(songs[0].id, songs[1].id, songs[2].id), order())
+        assertFalse(model.movePlaylistTrackTo(playlist.id, songs[1].id, 1), "same place")
+        assertFalse(model.movePlaylistTrackTo(playlist.id, songs[2].id, 99), "past the end is the end, already there")
+        assertEquals(listOf(0, 1, 2), db.playlists().itemsFor(playlist.id).map { it.position }, "no gaps")
+
+        // A song that left the library keeps its row; indexes count only the songs shown.
+        platform.folders["/music"] = platform.folders.getValue("/music").drop(1)
+        model.rescanNow()
+        withTimeout(5_000) { model.playlists.first { v -> v.firstOrNull { it.id == playlist.id }?.songs?.size == 2 } }
+        assertTrue(model.movePlaylistTrackTo(playlist.id, songs[2].id, 0))
+        assertEquals(listOf(songs[0].id, songs[2].id, songs[1].id), order())
+        val shown = model.playlists.await("reordered view") { v -> v.firstOrNull { it.id == playlist.id }?.songs?.firstOrNull()?.id == songs[2].id }
+        assertEquals(listOf(songs[2].id, songs[1].id), shown.first { it.id == playlist.id }.songs.map { it.id })
+    }
+
+    @Test
     fun backgroundBundleExportRetainsProgressAndCompletionInAppState() {
         val platform = object : FakePlatform() {
             override suspend fun writePlaylistBundle(

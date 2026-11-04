@@ -30,6 +30,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -141,20 +142,24 @@ fun ThemeChooser(model: AppModel, textSize: Int = 13) {
     }
 }
 
-/** The six preset accents and the custom colour, as in the mockups. Picking one turns dynamic colour off. */
+/**
+ * The six preset accents and the custom colour, as in the mockups. Picking one turns Dynamic
+ * color (Android) or Use system accent (desktop, [systemOn]) off.
+ */
 @Composable
-fun AccentSwatches(model: AppModel, settings: AppSettings, dynamicOn: Boolean, size: Dp, gap: Dp, onCustom: () -> Unit) {
+fun AccentSwatches(model: AppModel, settings: AppSettings, dynamicOn: Boolean, size: Dp, gap: Dp, onCustom: () -> Unit, systemOn: Boolean = false) {
     Row(horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) {
         fun pick(action: () -> Unit) {
             action()
             if (dynamicOn) model.setFlag(AppSettings.DYNAMIC_COLOR, false)
+            if (systemOn) model.setFlag(AppSettings.USE_SYSTEM_ACCENT, false)
         }
         for (preset in AccentPreset.entries) {
-            Swatch(size, selected = !dynamicOn && settings.accent == preset, label = preset.name, fill = Brush.linearGradient(listOf(Color(preset.argb), Color(preset.argb)))) {
+            Swatch(size, selected = !dynamicOn && !systemOn && settings.accent == preset, label = preset.name, fill = Brush.linearGradient(listOf(Color(preset.argb), Color(preset.argb)))) {
                 pick { model.setAccent(preset) }
             }
         }
-        Swatch(size, selected = !dynamicOn && settings.accent == null, label = "Custom colour", fill = Brush.sweepGradient(RAINBOW), inner = Color(settings.customAccent)) {
+        Swatch(size, selected = !dynamicOn && !systemOn && settings.accent == null, label = "Custom colour", fill = Brush.sweepGradient(RAINBOW), inner = Color(settings.customAccent)) {
             pick(onCustom)
         }
     }
@@ -174,8 +179,15 @@ private fun Swatch(size: Dp, selected: Boolean, label: String, fill: Brush, inne
 
 private val RAINBOW = listOf(Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00), Color(0xFF00FFFF), Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000))
 
-/** The name under "Accent color". */
-fun AppSettings.accentName(dynamicOn: Boolean): String = when {
+/** The desktop's accent colour for "Use system accent"; [name] when the desktop gives one (GNOME). */
+data class SystemAccent(val argb: Long, val name: String?)
+
+/** The desktop's current accent colour, or null when it doesn't share one (and on Android). */
+val LocalSystemAccent = compositionLocalOf<SystemAccent?> { null }
+
+/** The name under "Accent color". [system] is the followed desktop accent, if any. */
+fun AppSettings.accentName(dynamicOn: Boolean, system: SystemAccent? = null): String = when {
+    system != null -> "System · ${system.name ?: "desktop accent"}"
     dynamicOn -> "Cover art"
     accent == null -> "Custom"
     else -> accent.name
@@ -324,8 +336,27 @@ fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Uni
         SettingRow("Resume on start", "Reopen the last song where you left off") {
             SettingSwitch(settings.resumeOnStart, "Resume on start") { model.setFlag(AppSettings.RESUME_ON_START, it) }
         }
-        SettingRow("Pause on headphone unplug", divider = false) {
+        SettingRow("Pause on headphone unplug") {
             SettingSwitch(settings.pauseOnUnplug, "Pause on headphone unplug") { model.setFlag(AppSettings.PAUSE_ON_UNPLUG, it) }
+        }
+        MuteRows(model, settings, textSize = null)
+    }
+}
+
+/**
+ * Pause when muted (on by default) and Resume when unmuted (off by default, only if muting paused
+ * it; greyed out while Pause when muted is off). 2026-11-04 mockups.
+ */
+@Composable
+private fun MuteRows(model: AppModel, settings: AppSettings, textSize: Int?, pauseSub: String? = null) {
+    val size = textSize ?: 15
+    SettingRow("Pause when muted", pauseSub, textSize = size) {
+        SettingSwitch(settings.pauseOnMute, "Pause when muted") { model.setFlag(AppSettings.PAUSE_ON_MUTE, it) }
+    }
+    // Last row on Android (no divider); the desktop card continues with Gapless playback.
+    SettingRow("Resume when unmuted", "Only if muting paused it", divider = textSize != null, textSize = size) {
+        SettingSwitch(settings.resumeOnUnmute, "Resume when unmuted", enabled = settings.pauseOnMute) {
+            model.setFlag(AppSettings.RESUME_ON_UNMUTE, it)
         }
     }
 }
@@ -353,11 +384,19 @@ fun DesktopSettings(model: AppModel, narrow: Boolean, appVersion: String, choose
     val appearance: @Composable (Modifier) -> Unit = { m ->
         SettingsCard("Appearance", m) {
             SettingRow("Theme", textSize = 13) { ThemeChooser(model, textSize = 12) }
-            SettingRow("Accent color", settings.accentName(false), textSize = 13) {
-                AccentSwatches(model, settings, dynamicOn = false, 22.dp, 7.dp, onCustomAccent)
+            // "Use system accent" (2026-11-04 mockup; was "Dynamic color", Soon). Off by default; greyed
+            // out when the desktop doesn't share an accent colour.
+            val system = LocalSystemAccent.current
+            val followingSystem = settings.useSystemAccent && system != null
+            SettingRow("Accent color", settings.accentName(false, system.takeIf { followingSystem }), textSize = 13) {
+                AccentSwatches(model, settings, dynamicOn = false, 22.dp, 7.dp, onCustomAccent, systemOn = followingSystem)
             }
-            SettingRow("Dynamic color", "Follows the system accent", divider = false, textSize = 13, soon = true) {
-                SettingSwitch(false, "Dynamic color", enabled = false) {}
+            SettingRow(
+                "Use system accent",
+                if (system != null) "Follows your desktop's accent${system.name?.let { " · $it" } ?: ""}" else "Your desktop doesn't share an accent color",
+                divider = false, textSize = 13,
+            ) {
+                SettingSwitch(followingSystem, "Use system accent", enabled = system != null) { model.setFlag(AppSettings.USE_SYSTEM_ACCENT, it) }
             }
         }
     }
@@ -380,6 +419,7 @@ fun DesktopSettings(model: AppModel, narrow: Boolean, appVersion: String, choose
             SettingRow("Pause on headphone unplug", "When headphones or a Bluetooth device disconnect", textSize = 13) {
                 SettingSwitch(settings.pauseOnUnplug, "Pause on headphone unplug") { model.setFlag(AppSettings.PAUSE_ON_UNPLUG, it) }
             }
+            MuteRows(model, settings, textSize = 13, pauseSub = "System mute, or the volume slider at 0")
             SettingRow("Gapless playback", divider = false, textSize = 13) {
                 SettingSwitch(settings.gapless, "Gapless playback") { model.setFlag(AppSettings.GAPLESS, it) }
             }

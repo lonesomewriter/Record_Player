@@ -34,6 +34,12 @@ data class AppSettings(
     /** Reopen the last queue at the same song and position (paused) when the app starts. */
     val resumeOnStart: Boolean = true,
     val pauseOnUnplug: Boolean = true,
+    /** Pause when the device's (or desktop's) output is muted or at volume 0. */
+    val pauseOnMute: Boolean = true,
+    /** Resume when unmuted, but only if muting is what paused playback. */
+    val resumeOnUnmute: Boolean = false,
+    /** Desktop: follow the desktop's accent colour instead of the chosen one. */
+    val useSystemAccent: Boolean = false,
     /** Desktop: start the next song with no silence between tracks. */
     val gapless: Boolean = true,
     /** Desktop: rescan by itself when files in the music folder change. */
@@ -73,6 +79,9 @@ data class AppSettings(
         const val DYNAMIC_COLOR = "dynamicColor"
         const val RESUME_ON_START = "resumeOnStart"
         const val PAUSE_ON_UNPLUG = "pauseOnUnplug"
+        const val PAUSE_ON_MUTE = "pauseOnMute"
+        const val RESUME_ON_UNMUTE = "resumeOnUnmute"
+        const val USE_SYSTEM_ACCENT = "useSystemAccent"
         const val GAPLESS = "gapless"
         const val WATCH_FOLDER = "watchFolder"
         const val SHOW_LYRICS = "showLyrics"
@@ -100,6 +109,9 @@ data class AppSettings(
                 dynamicColor = flag(DYNAMIC_COLOR, d.dynamicColor),
                 resumeOnStart = flag(RESUME_ON_START, d.resumeOnStart),
                 pauseOnUnplug = flag(PAUSE_ON_UNPLUG, d.pauseOnUnplug),
+                pauseOnMute = flag(PAUSE_ON_MUTE, d.pauseOnMute),
+                resumeOnUnmute = flag(RESUME_ON_UNMUTE, d.resumeOnUnmute),
+                useSystemAccent = flag(USE_SYSTEM_ACCENT, d.useSystemAccent),
                 gapless = flag(GAPLESS, d.gapless),
                 watchFolder = flag(WATCH_FOLDER, d.watchFolder),
                 showLyrics = flag(SHOW_LYRICS, d.showLyrics),

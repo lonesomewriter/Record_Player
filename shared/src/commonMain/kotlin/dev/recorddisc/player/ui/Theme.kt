@@ -1,5 +1,9 @@
 package dev.recorddisc.player.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -7,6 +11,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -133,9 +138,20 @@ val LocalDiscColors = staticCompositionLocalOf { DiscColors() }
 /** Shorthand for the current colours. */
 val disc: DiscColors @Composable get() = LocalDiscColors.current
 
+/**
+ * The app's colours for [accent]. A new accent (a swatch, Dynamic color on a new song, the system
+ * accent) blends in over 360 ms instead of snapping (2026-11-04 mockups); with reduced motion it
+ * switches at once. The derived colours (ink, readable accent) follow the blended colour.
+ */
 @Composable
 fun DiscTheme(accent: Color, light: Boolean = false, content: @Composable () -> Unit) {
-    val colors = remember(accent, light) { DiscColors.forAccent(accent, light) }
+    val reduceMotion = rememberReduceMotion()
+    val shownAccent by animateColorAsState(
+        accent,
+        if (reduceMotion) snap() else tween(360, easing = FastOutSlowInEasing),
+        label = "accent",
+    )
+    val colors = remember(shownAccent, light) { DiscColors.forAccent(shownAccent, light) }
     val scheme = remember(colors) {
         val base = if (light) lightColorScheme() else darkColorScheme()
         base.copy(

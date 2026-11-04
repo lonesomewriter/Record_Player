@@ -86,9 +86,14 @@ fun DesktopApp(
     startEditor: Boolean = false,
     startLyricsEditor: Boolean = false,
     startPlaylistId: Long? = null,
+    systemAccent: kotlinx.coroutines.flow.StateFlow<SystemAccent?>? = null,
 ) {
     val settings = model.settings.collectAsState().value
-    DiscTheme(Color(settings?.accentArgb ?: 0xFFE0A458), light = settings?.useLightTheme() == true) {
+    // Settings → Use system accent: follow the desktop's accent while it shares one.
+    val system = systemAccent?.collectAsState()?.value
+    val accent = if (settings?.useSystemAccent == true && system != null) Color(system.argb) else Color(settings?.accentArgb ?: 0xFFE0A458)
+    DiscTheme(accent, light = settings?.useLightTheme() == true) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalSystemAccent provides system) {
         BoxWithConstraints(Modifier.fillMaxSize().background(disc.shell)) {
             if (settings == null) return@BoxWithConstraints
             val narrow = maxWidth < 900.dp
@@ -116,6 +121,13 @@ fun DesktopApp(
                 var view by remember { mutableStateOf(startView) }
                 var playlistId by remember { mutableStateOf(startPlaylistId) }
                 var queueOpen by remember { mutableStateOf(true) }
+                // Song details sits over the main view (2026-11-04 mockup), so ← returns to the page
+                // underneath unchanged; switching section or opening Home closes it.
+                var detailsId by remember { mutableStateOf<Long?>(null) }
+                val showView: (DesktopView) -> Unit = { detailsId = null; view = it; if (it == DesktopView.Playlists) playlistId = null }
+                val viewDetails: (dev.recorddisc.player.library.TrackEntity) -> Unit = { t ->
+                    if (t.id == state.current?.id) { detailsId = null; view = DesktopView.Home } else detailsId = t.id
+                }
                 val main = MainContext(
                     narrow = narrow,
                     startLibrary = startLibrary,
@@ -124,31 +136,48 @@ fun DesktopApp(
                     playlistActions = playlistActions,
                     selectedPlaylistId = playlistId,
                     onSelectPlaylist = { playlistId = it },
-                    onOpenLibrary = { view = DesktopView.Library; playlistId = null },
+                    onOpenLibrary = { detailsId = null; view = DesktopView.Library; playlistId = null },
                     onCustomAccent = { picking = true },
                 )
+                val mainArea: @Composable () -> Unit = {
+                    MainView(model, state, spin, view, main)
+                    tracks[detailsId]?.let { track ->
+                        DesktopSongDetails(
+                            model, track, state.current?.title, state.isPlaying, narrow,
+                            onBack = { detailsId = null },
+                            onPlay = {
+                                playFromDetails(model, track, playlistId?.takeIf { view == DesktopView.Playlists }?.let(PlaySource::Playlist))
+                                detailsId = null
+                                view = DesktopView.Home
+                            },
+                        )
+                    }
+                }
+                androidx.compose.runtime.CompositionLocalProvider(LocalViewDetails provides viewDetails) {
                 if (narrow) {
                     Column(Modifier.fillMaxSize()) {
-                        TopNav(view) { view = it; if (it == DesktopView.Playlists) playlistId = null }
-                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { MainView(model, state, spin, view, main) }
-                        Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { view = DesktopView.Home }
+                        TopNav(view, showView)
+                        Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { mainArea() }
+                        Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { showView(DesktopView.Home) }
                     }
                 } else {
                     Row(Modifier.fillMaxSize()) {
-                        Sidebar(model, view, playlistId, if (roomForQueue) 236.dp else 210.dp, onSelect = { view = it; if (it == DesktopView.Playlists) playlistId = null }, onSelectPlaylist = {
+                        Sidebar(model, view, playlistId, if (roomForQueue) 236.dp else 210.dp, onSelect = showView, onSelectPlaylist = {
+                            detailsId = null
                             playlistId = it
                             view = DesktopView.Playlists
                         })
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
-                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { MainView(model, state, spin, view, main) }
+                                Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { mainArea() }
                                 if (roomForQueue && queueOpen) QueuePanel(model, state)
                             }
                             Dock(model, state, narrow = false, queueOpen = queueOpen, onToggleQueue = if (roomForQueue) ({ queueOpen = !queueOpen }) else null) {
-                                view = DesktopView.Home
+                                showView(DesktopView.Home)
                             }
                         }
                     }
+                }
                 }
             }
             if (settings.setupDone && picking) {
@@ -164,6 +193,7 @@ fun DesktopApp(
             val lyricsTrack = tracks[lyricsId]
             if (settings.setupDone && lyricsTrack != null) DesktopLyricsEditor(model, lyricsTrack, state, editor) { lyricsId = null }
             MessageToast(model.messages, Modifier.align(Alignment.BottomCenter).padding(bottom = 104.dp))
+        }
         }
     }
 }

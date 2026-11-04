@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,7 +32,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,6 +82,69 @@ class LibraryNav(tab: LibraryTab = LibraryTab.Songs, vararg pages: LibraryPage) 
 
     fun back() {
         pages = pages.dropLast(1)
+    }
+
+    /** Replaces the open pages, e.g. to return to the album a song was played from. */
+    fun show(vararg pages: LibraryPage) {
+        this.pages = pages.toList()
+    }
+
+    companion object {
+        /** Keeps the tab and pages across configuration changes (Android rotation, process death). */
+        val Saver: Saver<LibraryNav, Any> = listSaver(
+            save = { nav -> listOf(nav.tab.name) + nav.pages.map { encodePage(it) } },
+            restore = { saved ->
+                val tab = LibraryTab.entries.firstOrNull { it.name == saved.firstOrNull() } ?: LibraryTab.Songs
+                LibraryNav(tab, *saved.drop(1).mapNotNull(::decodePage).toTypedArray())
+            },
+        )
+
+        internal fun encodePage(page: LibraryPage): String = when (page) {
+            is LibraryPage.AlbumPage -> "album\u0000${page.key}"
+            is LibraryPage.ArtistPage -> "artist\u0000${page.name}"
+        }
+
+        internal fun decodePage(value: String): LibraryPage? {
+            val kind = value.substringBefore('\u0000')
+            val arg = value.substringAfter('\u0000', "")
+            return when (kind) {
+                "album" -> LibraryPage.AlbumPage(arg)
+                "artist" -> LibraryPage.ArtistPage(arg)
+                else -> null
+            }
+        }
+    }
+}
+
+/** Where the playing song was last chosen. Leaving Now Playing goes back there (2026-11-04 mockups). */
+sealed interface PlaySource {
+    data object Library : PlaySource
+    data class Album(val key: String) : PlaySource
+    data class Artist(val name: String) : PlaySource
+    data class Playlist(val id: Long) : PlaySource
+
+    companion object {
+        val Saver: Saver<PlaySource?, String> = Saver(
+            save = { source ->
+                when (source) {
+                    null -> ""
+                    Library -> "library"
+                    is Album -> "album\u0000${source.key}"
+                    is Artist -> "artist\u0000${source.name}"
+                    is Playlist -> "playlist\u0000${source.id}"
+                }
+            },
+            restore = { value ->
+                val arg = value.substringAfter('\u0000', "")
+                when (value.substringBefore('\u0000')) {
+                    "library" -> Library
+                    "album" -> Album(arg)
+                    "artist" -> Artist(arg)
+                    "playlist" -> arg.toLongOrNull()?.let(::Playlist)
+                    else -> null
+                }
+            },
+        )
     }
 }
 
@@ -141,41 +208,69 @@ fun NoMatches(model: AppModel, tab: LibraryTab) {
 private fun Gone(what: String) =
     Text("This $what is no longer in your library.", Modifier.padding(vertical = 18.dp), color = disc.muted, fontSize = 13.sp)
 
-/** ⋮ on a song: the per-song actions of later parts. */
+/**
+ * ⋮ → View Details: Now Playing (desktop: Home) for the song that's playing, otherwise that
+ * song's Song details page. Each layout provides it; when absent the item is left out.
+ */
+val LocalViewDetails = staticCompositionLocalOf<((TrackEntity) -> Unit)?> { null }
+
+/**
+ * The one ⋮ song menu used everywhere (2026-11-04 mockups): View Details, Edit lyrics,
+ * Edit metadata, Add to playlist, View file location. Inside a playlist, a divider and
+ * Remove from playlist follow. [showDetails] is false where you're already on the song's
+ * details (Now Playing, Song details). A null [track] greys every item out.
+ */
 @Composable
-fun SongMenuButton(model: AppModel, track: TrackEntity, size: Dp = 28.dp) {
-    var open by remember { mutableStateOf(false) }
+fun SongMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    track: TrackEntity?,
+    showDetails: Boolean = true,
+    onRemoveFromPlaylist: (() -> Unit)? = null,
+) {
     var viewFileTrack by remember { mutableStateOf<TrackEntity?>(null) }
+    val viewDetails = LocalViewDetails.current
     val editSong = LocalEditSong.current
     val editLyrics = LocalEditLyrics.current
     val addToPlaylist = LocalAddToPlaylist.current
+    DropdownMenu(expanded, onDismissRequest = onDismiss) {
+        val run: ((TrackEntity) -> Unit) -> () -> Unit = { action -> { onDismiss(); track?.let(action) } }
+        if (showDetails && viewDetails != null) SongMenuItem("View Details", track != null, onClick = run(viewDetails))
+        SongMenuItem("Edit lyrics", track != null, onClick = run(editLyrics))
+        SongMenuItem("Edit metadata", track != null, onClick = run(editSong))
+        SongMenuItem("Add to playlist", track != null, onClick = run(addToPlaylist))
+        SongMenuItem("View file location", track != null, onClick = run { viewFileTrack = it })
+        if (onRemoveFromPlaylist != null) {
+            HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = disc.line)
+            SongMenuItem("Remove from playlist", track != null, danger = true, onClick = run { onRemoveFromPlaylist() })
+        }
+    }
+    // Opening the file manager is composable on each platform, so it runs from composition.
+    viewFileTrack?.let { ft ->
+        viewFileTrack = null
+        viewFileLocation(ft.location, ft.folder)
+    }
+}
+
+@Composable
+private fun SongMenuItem(label: String, enabled: Boolean, danger: Boolean = false, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label, color = if (!enabled) disc.muted else if (danger) disc.error else disc.text) },
+        enabled = enabled,
+        onClick = onClick,
+    )
+}
+
+/** The ⋮ on a song row. [onRemoveFromPlaylist] adds Remove from playlist (playlist rows). */
+@Composable
+fun SongMenuButton(track: TrackEntity, size: Dp = 28.dp, onRemoveFromPlaylist: (() -> Unit)? = null) {
+    var open by remember { mutableStateOf(false) }
     Box {
         Text(
             "⋮", Modifier.width(size).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "More options") { open = true }.padding(vertical = 4.dp),
             color = disc.muted, fontSize = 18.sp, textAlign = TextAlign.Center,
         )
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            for (item in listOf("Add to playlist", "Edit metadata", "Edit lyrics", "View file location")) {
-                val ready = true
-                DropdownMenuItem(
-                    text = { Text(item, color = if (ready) disc.text else disc.muted) },
-                    trailingIcon = { if (!ready) SoonTag() },
-                    onClick = {
-                        open = false
-                        when {
-                            item == "Add to playlist" -> addToPlaylist(track)
-                            item == "Edit lyrics" -> editLyrics(track)
-                            item == "Edit metadata" -> editSong(track)
-                            item == "View file location" -> viewFileTrack = track
-                        }
-                    },
-                )
-            }
-        }
-    }
-    viewFileTrack?.let { ft ->
-        viewFileTrack = null
-        viewFileLocation(ft.location, ft.folder)
+        SongMenu(open, { open = false }, track, onRemoveFromPlaylist = onRemoveFromPlaylist)
     }
 }
 
@@ -199,15 +294,16 @@ fun Album.byline(): String = listOfNotNull(artist ?: "Unknown artist", year?.toS
 fun Artist.counts(): String =
     listOfNotNull(albums.size.takeIf { it > 0 }?.let { plural(it, "album") }, plural(tracks.size, "song")).joinToString(" · ")
 
-/** Play / Shuffle on album and artist pages: an outlined pill, or the filled accent button. */
+/** Play / Shuffle on album and artist pages: an outlined pill, or the filled accent button. [fill] stretches it, label centred. */
 @Composable
-fun PageButton(icon: ImageVector, label: String, filled: Boolean = false, pill: Boolean = true, textSize: Int = 13, onClick: () -> Unit) {
+fun PageButton(icon: ImageVector, label: String, filled: Boolean = false, pill: Boolean = true, textSize: Int = 13, fill: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(if (pill) 50 else 12)
     Row(
-        Modifier.clip(shape).background(if (filled) disc.accent else disc.tint.copy(alpha = 0.03f))
+        (if (fill) Modifier.fillMaxWidth() else Modifier).clip(shape).background(if (filled) disc.accent else disc.tint.copy(alpha = 0.03f))
             .then(if (filled) Modifier else Modifier.border(1.dp, disc.line, shape))
             .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, if (fill) Alignment.CenterHorizontally else Alignment.Start),
     ) {
         Icon(icon, null, Modifier.size(16.dp), tint = if (filled) disc.accentInk else disc.text)
         Text(label, color = if (filled) disc.accentInk else disc.text, fontSize = textSize.sp, fontWeight = FontWeight.SemiBold)
@@ -221,10 +317,14 @@ private fun SectionLabel(text: String, modifier: Modifier = Modifier) =
 
 // ---------------------------------------------------------------- Android
 
-/** Android Library: search, tabs and the lists, plus album and artist pages. Playing a song opens Now Playing. */
+/**
+ * Android Library: search, tabs and the lists, plus album and artist pages. Choosing a song (or
+ * Play / Shuffle) only plays it and reports where it was chosen through [onPlayed]; it no longer
+ * opens Now Playing (2026-11-04 mockups). [nav] is kept by the caller so the open page survives
+ * a trip to Now Playing.
+ */
 @Composable
-fun PhoneLibrary(model: AppModel, onBack: () -> Unit, onPlayed: () -> Unit) {
-    val nav = remember { LibraryNav() }
+fun PhoneLibrary(model: AppModel, nav: LibraryNav, onBack: () -> Unit, onPlayed: (PlaySource) -> Unit) {
     PlatformBackHandler(enabled = nav.page != null) { nav.back() }
     Column(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 26.dp)) {
         when (val page = nav.page) {
@@ -256,7 +356,7 @@ private fun PhoneHeader(title: String, backLabel: String, onBack: () -> Unit) {
 private val MiniPlayerSpace = PaddingValues(bottom = 92.dp)
 
 @Composable
-private fun PhoneLibraryLists(model: AppModel, nav: LibraryNav, onPlayed: () -> Unit) {
+private fun PhoneLibraryLists(model: AppModel, nav: LibraryNav, onPlayed: (PlaySource) -> Unit) {
     val songs by model.librarySongs.collectAsState()
     val albums by model.libraryAlbums.collectAsState()
     val artists by model.libraryArtists.collectAsState()
@@ -265,7 +365,7 @@ private fun PhoneLibraryLists(model: AppModel, nav: LibraryNav, onPlayed: () -> 
     when (nav.tab) {
         LibraryTab.Songs -> if (songs.isEmpty()) NoMatches(model, nav.tab) else LazyColumn(Modifier.fillMaxSize(), contentPadding = MiniPlayerSpace) {
             itemsIndexed(songs, key = { _, t -> t.id }) { i, t ->
-                PhoneSongRow(model, t, t.subtitle()) { model.play(songs, i); onPlayed() }
+                PhoneSongRow(model, t, t.subtitle()) { model.play(songs, i); onPlayed(PlaySource.Library) }
             }
         }
         LibraryTab.Albums -> if (albums.isEmpty()) NoMatches(model, nav.tab) else BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -318,7 +418,7 @@ private fun PhoneSongRow(model: AppModel, t: TrackEntity, subtitle: String?, num
             if (subtitle != null) Text(subtitle, Modifier.padding(top = 2.dp), color = disc.muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(formatTime(t.durationMs), color = disc.muted, fontSize = 11.sp)
-        SongMenuButton(model, t)
+        SongMenuButton(t)
     }
 }
 
@@ -333,7 +433,7 @@ private fun PhoneAlbumCard(model: AppModel, a: Album, width: Dp, onOpen: () -> U
 }
 
 @Composable
-private fun PhoneAlbumPage(model: AppModel, nav: LibraryNav, key: String, onPlayed: () -> Unit) {
+private fun PhoneAlbumPage(model: AppModel, nav: LibraryNav, key: String, onPlayed: (PlaySource) -> Unit) {
     val albums by model.albums.collectAsState()
     val album = albums.firstOrNull { it.key == key } ?: return Gone("album")
     LazyColumn(Modifier.fillMaxSize(), contentPadding = MiniPlayerSpace) {
@@ -349,12 +449,12 @@ private fun PhoneAlbumPage(model: AppModel, nav: LibraryNav, key: String, onPlay
         }
         item(key = "buttons") {
             Row(Modifier.padding(top = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                PageButton(DiscIcons.Play, "Play") { model.playAll(album.tracks, shuffle = false); onPlayed() }
-                PageButton(DiscIcons.Shuffle, "Shuffle") { model.playAll(album.tracks, shuffle = true); onPlayed() }
+                PageButton(DiscIcons.Play, "Play") { model.playAll(album.tracks, shuffle = false); onPlayed(PlaySource.Album(key)) }
+                PageButton(DiscIcons.Shuffle, "Shuffle") { model.playAll(album.tracks, shuffle = true); onPlayed(PlaySource.Album(key)) }
             }
         }
         itemsIndexed(album.tracks, key = { _, t -> t.id }) { i, t ->
-            PhoneSongRow(model, t, subtitle = null, number = t.trackNumber ?: (i + 1)) { model.play(album.tracks, i); onPlayed() }
+            PhoneSongRow(model, t, subtitle = null, number = t.trackNumber ?: (i + 1)) { model.play(album.tracks, i); onPlayed(PlaySource.Album(key)) }
         }
     }
 }
@@ -373,7 +473,7 @@ private fun ArtistLink(artist: String?, nav: LibraryNav, modifier: Modifier, tex
 }
 
 @Composable
-private fun PhoneArtistPage(model: AppModel, nav: LibraryNav, name: String, onPlayed: () -> Unit) {
+private fun PhoneArtistPage(model: AppModel, nav: LibraryNav, name: String, onPlayed: (PlaySource) -> Unit) {
     val artists by model.artists.collectAsState()
     val artist = artists.firstOrNull { it.name == name } ?: return Gone("artist")
     LazyColumn(Modifier.fillMaxSize(), contentPadding = MiniPlayerSpace) {
@@ -388,8 +488,8 @@ private fun PhoneArtistPage(model: AppModel, nav: LibraryNav, name: String, onPl
         }
         item(key = "buttons") {
             Row(Modifier.padding(top = 16.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                PageButton(DiscIcons.Play, "Play all") { model.playAll(artist.tracks, shuffle = false); onPlayed() }
-                PageButton(DiscIcons.Shuffle, "Shuffle") { model.playAll(artist.tracks, shuffle = true); onPlayed() }
+                PageButton(DiscIcons.Play, "Play all") { model.playAll(artist.tracks, shuffle = false); onPlayed(PlaySource.Artist(name)) }
+                PageButton(DiscIcons.Shuffle, "Shuffle") { model.playAll(artist.tracks, shuffle = true); onPlayed(PlaySource.Artist(name)) }
             }
         }
         if (artist.albums.isNotEmpty()) {
@@ -406,7 +506,7 @@ private fun PhoneArtistPage(model: AppModel, nav: LibraryNav, name: String, onPl
         }
         item(key = "songsLabel") { SectionLabel("Songs", Modifier.padding(top = 20.dp, bottom = 6.dp)) }
         itemsIndexed(artist.tracks, key = { _, t -> t.id }) { i, t ->
-            PhoneSongRow(model, t, t.album ?: "No album") { model.play(artist.tracks, i); onPlayed() }
+            PhoneSongRow(model, t, t.album ?: "No album") { model.play(artist.tracks, i); onPlayed(PlaySource.Artist(name)) }
         }
     }
 }
@@ -460,7 +560,7 @@ fun LazyListScope.desktopSongTable(model: AppModel, songs: List<TrackEntity>, cu
             }
             if (showAlbum) Text(t.album ?: "—", Modifier.weight(0.9f), color = disc.muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(formatTime(t.durationMs), Modifier.width(46.dp), color = disc.muted, fontSize = 10.sp)
-            SongMenuButton(model, t, 26.dp)
+            SongMenuButton(t, 26.dp)
         }
     }
 }
@@ -502,9 +602,9 @@ fun LazyListScope.desktopArtistGrid(model: AppModel, artists: List<Artist>, grid
         }
     }
 
-/** Back button, eyebrow and title at the top of a desktop album or artist page. */
+/** Back button, eyebrow and title at the top of a desktop album, artist or Song details page. */
 @Composable
-private fun DesktopPageHeader(eyebrow: String, title: String, onBack: () -> Unit) {
+internal fun DesktopPageHeader(eyebrow: String, title: String, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(bottom = 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         CircleIconButton("←", "Back", onBack)
         Column {

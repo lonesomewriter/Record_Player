@@ -80,6 +80,18 @@ class PlaybackService : MediaSessionService() {
             app.model.settings.filterNotNull().map { it.pauseOnUnplug }.distinctUntilChanged()
                 .collect { exo.setHandleAudioBecomingNoisy(it) }
         }
+        // Settings → "Pause when muted" / "Resume when unmuted". Runs here, with the player, so it
+        // works with the app closed too.
+        scope.launch {
+            MuteAutoPause(
+                muted = mediaMutedFlow(),
+                isPlaying = exo.playWhenReadyFlow(),
+                playingNow = { exo.playWhenReady },
+                settings = { app.model.settings.value },
+                pause = { exo.pause() },
+                play = { exo.play() },
+            ).run()
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

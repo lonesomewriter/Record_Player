@@ -507,4 +507,97 @@ class DesktopScreenshotTest {
         shoot(model, "13-artist", view = DesktopView.Library, library = LibraryNav(LibraryTab.Artists, LibraryPage.ArtistPage("Neon Coast")))
         shoot(model, "14-library-albums-narrow", width = 860, height = 1000, view = DesktopView.Library, library = LibraryNav(LibraryTab.Albums))
     }
+
+    /**
+     * 2026-11-04 mockup changes on desktop and phone: the shared ⋮ song menu (playlist rows add
+     * Remove from playlist; no Move up / Move down), Song details, and the new Settings rows.
+     */
+    @Test
+    fun songMenusSongDetailsAndNewSettings() {
+        val platform = MockupPlatform()
+        val model = model(platform)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        val playlist = runBlocking {
+            model.createPlaylist("Road Trip").also { created -> tracks.forEach { model.addToPlaylist(created.id, it.id) } }
+        }
+        model.playlists.await { lists -> lists.any { it.id == playlist.id && it.songCount == 4 } }
+
+        val detailsScene = scene(model, view = DesktopView.Playlists, playlistId = playlist.id)
+        try {
+            click(detailsScene, "More options")
+            for (item in listOf("View Details", "Edit lyrics", "Edit metadata", "Add to playlist", "View file location", "Remove from playlist")) {
+                assertNotNull(nodeWithText(detailsScene, item), "playlist song menu has $item")
+            }
+            assertEquals(null, nodeWithText(detailsScene, "Move up"), "Move up is gone")
+            capture(detailsScene, "39-playlist-song-menu")
+            // The first row is the song loaded in the player: View Details goes to Home (desktop's Now Playing).
+            click(detailsScene, "View Details")
+            assertNotNull(nodeWithText(detailsScene, "Now spinning".uppercase()), "playing song → Home")
+            click(detailsScene, "Playlists")
+            click(detailsScene, "Road Trip")
+            // The second row isn't playing: View Details opens its Song details page.
+            val second = nodes(detailsScene).filter { node ->
+                node.config.contains(SemanticsActions.OnClick) && node.config[SemanticsActions.OnClick].label == "More options"
+            }[1]
+            assertNotNull(second.config[SemanticsActions.OnClick].action).invoke()
+            settle(detailsScene)
+            click(detailsScene, "View Details")
+            assertNotNull(nodeWithText(detailsScene, "SONG DETAILS"), "Song details page")
+            assertNotNull(nodeWithText(detailsScene, "Add to playlist"))
+            capture(detailsScene, "40-song-details")
+            click(detailsScene, "Back")
+            assertNotNull(nodeWithText(detailsScene, "Export"), "back on the playlist page")
+        } finally {
+            detailsScene.close()
+        }
+
+        val accent = kotlinx.coroutines.flow.MutableStateFlow<SystemAccent?>(SystemAccent(0xFF3584E4, "Blue"))
+        val settingsScene = ImageComposeScene(1440, 852, Density(1f)) {
+            DesktopApp(model, chooseFolder = { null }, startView = DesktopView.Settings, appVersion = "0.1.0", systemAccent = accent)
+        }
+        try {
+            settle(settingsScene)
+            for (row in listOf("Use system accent", "Pause when muted", "Resume when unmuted")) {
+                assertNotNull(nodeWithText(settingsScene, row), "Settings has $row")
+            }
+            assertEquals(null, nodeWithText(settingsScene, "Dynamic color"), "desktop row renamed")
+            // The switch, not the row's label text.
+            val toggle = nodes(settingsScene).first { node ->
+                node.config.contains(SemanticsActions.OnClick) &&
+                    "Use system accent" in node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }
+            }
+            assertNotNull(toggle.config[SemanticsActions.OnClick].action).invoke()
+            model.settings.await { it?.useSystemAccent == true }
+            settle(settingsScene)
+            assertNotNull(nodeWithText(settingsScene, "System · Blue"), "accent label follows the desktop")
+            capture(settingsScene, "41-settings-system-accent-and-mute")
+        } finally {
+            settingsScene.close()
+        }
+
+        // Phone: Song details for a song that isn't playing, opened from the Library ⋮ menu.
+        val phoneDir = File(out.parentFile, "phone").apply { mkdirs() }
+        val phone = ImageComposeScene(412, 900, Density(1f)) { PhoneApp(model, onChooseFolder = {}) }
+        try {
+            click(phone, "LIBRARY")
+            // The second song (the first is loaded in the player and would open Now Playing).
+            val second = nodes(phone).filter { node ->
+                node.config.contains(SemanticsActions.OnClick) && node.config[SemanticsActions.OnClick].label == "More options"
+            }[1]
+            assertNotNull(second.config[SemanticsActions.OnClick].action).invoke()
+            settle(phone)
+            click(phone, "View Details")
+            assertNotNull(nodeWithText(phone, "Add to playlist"), "phone Song details")
+            File(phoneDir, "song-details.png").writeBytes(phone.render(3_000_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes)
+            click(phone, "Play")
+            assertNotNull(nodeWithText(phone, "SWIPE LEFT TO RETURN TO LIBRARY"), "Now Playing names where it returns")
+            File(phoneDir, "now-playing.png").writeBytes(phone.render(6_000_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes)
+        } finally {
+            phone.close()
+        }
+    }
 }

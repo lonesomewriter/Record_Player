@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -67,20 +68,41 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 
-enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, Inbox, EditTags, EditLyrics }
+enum class PhoneScreen { Home, NowPlaying, Library, Playlists, Settings, Inbox, EditTags, EditLyrics, SongDetails }
 
+/**
+ * Which way a page change slides. Pages move opposite to the finger (2026-11-04 mockups): a
+ * Forward change (finger right) brings the new page in from the right and pushes the old one
+ * out to the left; Back (finger left, the Back button) does the reverse. Taps use None.
+ */
+enum class NavDirection { Forward, Back, None }
+
+/**
+ * Where a swipe goes: right moves forward through Home, Library, Playlists, Settings, Inbox;
+ * left goes back. On Now Playing and Song details a left swipe returns to [nowPlayingReturn] /
+ * [detailsReturn] (the caller works these out from where the song was chosen).
+ */
 internal fun phoneSwipeDestination(
     screen: PhoneScreen,
     swipeRight: Boolean,
     nowPlayingReturn: PhoneScreen = PhoneScreen.Home,
+    detailsReturn: PhoneScreen = PhoneScreen.Home,
 ): PhoneScreen? = when (screen) {
     PhoneScreen.Home -> if (swipeRight) PhoneScreen.Library else null
     PhoneScreen.Library -> if (swipeRight) PhoneScreen.Playlists else PhoneScreen.Home
     PhoneScreen.Playlists -> if (swipeRight) PhoneScreen.Settings else PhoneScreen.Library
     PhoneScreen.Settings -> if (swipeRight) PhoneScreen.Inbox else PhoneScreen.Playlists
     PhoneScreen.Inbox -> if (swipeRight) null else PhoneScreen.Settings
-    PhoneScreen.NowPlaying -> if (swipeRight) null else nowPlayingReturn.takeIf { it in setOf(PhoneScreen.Library, PhoneScreen.Playlists) } ?: PhoneScreen.Home
+    PhoneScreen.NowPlaying -> if (swipeRight) null else nowPlayingReturn
+    PhoneScreen.SongDetails -> if (swipeRight) null else detailsReturn
     PhoneScreen.EditTags, PhoneScreen.EditLyrics -> null
+}
+
+/** The screen Now Playing returns to for a play source: its playlist or Library page, or Home. */
+internal fun nowPlayingReturnScreen(source: PlaySource?): PhoneScreen = when (source) {
+    null -> PhoneScreen.Home
+    is PlaySource.Playlist -> PhoneScreen.Playlists
+    else -> PhoneScreen.Library
 }
 
 /** The Android layout: the disc is home; Library, Playlists and Settings sit on its arc. */
@@ -102,10 +124,13 @@ fun PhoneApp(
     }
     val artworkRevision by model.artwork.revision.collectAsState()
     val currentLocation = state.current?.location
+    // The previous song's colour stays until the new cover's colour is ready, so the accent fades
+    // straight from one cover to the next instead of flashing the preset colour in between.
     val coverAccent by produceState<Color?>(null, settings?.dynamicColor, currentLocation, artworkRevision) {
-        value = null
-        if (settings?.dynamicColor == true && currentLocation != null) {
-            value = model.artwork.get(currentLocation, maxSizePx = 64)?.let(::representativeCoverAccent)
+        value = if (settings?.dynamicColor == true && currentLocation != null) {
+            model.artwork.get(currentLocation, maxSizePx = 64)?.let(::representativeCoverAccent)
+        } else {
+            null
         }
     }
     val accent = if (settings?.dynamicColor == true) {
@@ -141,8 +166,16 @@ private fun BoxScope.PhoneScreens(
     playlistActions: PlaylistFileActions,
 ) {
     var screen by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
-    var nowPlayingReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var navDirection by rememberSaveable { mutableStateOf(NavDirection.None) }
     var inboxReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    // The Library's open page and the open playlist live here, so Now Playing can return to them.
+    val libraryNav = rememberSaveable(saver = LibraryNav.Saver) { LibraryNav() }
+    var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var playSource by rememberSaveable(stateSaver = PlaySource.Saver) { mutableStateOf<PlaySource?>(null) }
+    // Song details: the song, the screen it was opened from, and where that song sits (for Play).
+    var detailsId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var detailsReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
+    var detailsSource by rememberSaveable(stateSaver = PlaySource.Saver) { mutableStateOf<PlaySource?>(null) }
     var picking by rememberSaveable { mutableStateOf(false) }
     var progressDialogTaskId by rememberSaveable { mutableStateOf<Long?>(null) }
     var hiddenProgressTaskId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -152,25 +185,52 @@ private fun BoxScope.PhoneScreens(
     var editReturn by rememberSaveable { mutableStateOf(PhoneScreen.Home) }
     var lyricsId by rememberSaveable { mutableStateOf<Long?>(null) }
     val exportTask by model.playlistBundleExportTask.collectAsState()
-    val closeEditor = { screen = editReturn }
-    fun openNowPlaying(returnTo: PhoneScreen) {
-        nowPlayingReturn = returnTo.takeIf { it == PhoneScreen.Library || it == PhoneScreen.Playlists } ?: PhoneScreen.Home
-        screen = PhoneScreen.NowPlaying
+    fun go(destination: PhoneScreen, direction: NavDirection = NavDirection.None) {
+        navDirection = direction
+        screen = destination
+    }
+    // Arriving at Library or Playlists from the arc, a swipe or a notification starts at the top
+    // level, as before; returning from Now Playing, an editor or Song details keeps the open page.
+    fun enterFresh(destination: PhoneScreen, direction: NavDirection = NavDirection.None) {
+        if (destination == PhoneScreen.Library) libraryNav.show()
+        if (destination == PhoneScreen.Playlists) openPlaylistId = null
+        if (destination == PhoneScreen.Inbox) inboxReturn = screen
+        go(destination, direction)
+    }
+    val closeEditor = { go(editReturn) }
+    val nowPlayingReturn = nowPlayingReturnScreen(playSource)
+    /** Leaves Now Playing for the page the playing song was last chosen from. */
+    fun closeNowPlaying(direction: NavDirection) {
+        when (val source = playSource) {
+            null -> Unit
+            PlaySource.Library -> libraryNav.show()
+            is PlaySource.Album -> libraryNav.show(LibraryPage.AlbumPage(source.key))
+            is PlaySource.Artist -> libraryNav.show(LibraryPage.ArtistPage(source.name))
+            // A deleted playlist falls back to the Playlists list.
+            is PlaySource.Playlist -> openPlaylistId = source.id.takeIf { id -> model.playlists.value.any { it.id == id } }
+        }
+        go(nowPlayingReturn, direction)
+    }
+    /** The play source for the page on screen now (where a song shown from here sits). */
+    fun sourceHere(): PlaySource? = when (screen) {
+        PhoneScreen.Library -> when (val page = libraryNav.page) {
+            null -> PlaySource.Library
+            is LibraryPage.AlbumPage -> PlaySource.Album(page.key)
+            is LibraryPage.ArtistPage -> PlaySource.Artist(page.name)
+        }
+        PhoneScreen.Playlists -> openPlaylistId?.let(PlaySource::Playlist)
+        else -> null
     }
     fun openScreen(destination: PhoneScreen) {
-        when (destination) {
-            PhoneScreen.NowPlaying -> openNowPlaying(PhoneScreen.Home)
-            PhoneScreen.Inbox -> { inboxReturn = screen; screen = PhoneScreen.Inbox }
-            else -> screen = destination
-        }
+        if (destination == PhoneScreen.NowPlaying) go(PhoneScreen.NowPlaying) else enterFresh(destination)
     }
     // Notification taps always have Home as their return destination.
     LaunchedEffect(openRequests) {
         openRequests.collect {
             when (it) {
-                PhoneScreen.NowPlaying -> openNowPlaying(PhoneScreen.Home)
-                PhoneScreen.Inbox -> { inboxReturn = PhoneScreen.Home; screen = PhoneScreen.Inbox }
-                else -> screen = it
+                PhoneScreen.NowPlaying -> go(PhoneScreen.NowPlaying)
+                PhoneScreen.Inbox -> { inboxReturn = PhoneScreen.Home; go(PhoneScreen.Inbox) }
+                else -> enterFresh(it)
             }
         }
     }
@@ -183,45 +243,104 @@ private fun BoxScope.PhoneScreens(
             hiddenProgressTaskId = null
         }
     }
-    // The lyrics editor handles Back itself (it asks before discarding changes).
+    // The lyrics editor handles Back itself (it asks before discarding changes). Back slides like a
+    // left swipe. Library and playlist pages close their own open page first.
     PlatformBackHandler(enabled = screen != PhoneScreen.Home && screen != PhoneScreen.EditLyrics) {
         when (screen) {
-            PhoneScreen.EditTags -> closeEditor()
-            PhoneScreen.NowPlaying -> screen = nowPlayingReturn
-            PhoneScreen.Inbox -> screen = inboxReturn
-            else -> screen = PhoneScreen.Home
+            PhoneScreen.EditTags -> go(editReturn, NavDirection.Back)
+            PhoneScreen.NowPlaying -> closeNowPlaying(NavDirection.Back)
+            PhoneScreen.SongDetails -> go(detailsReturn, NavDirection.Back)
+            PhoneScreen.Inbox -> go(inboxReturn, NavDirection.Back)
+            else -> go(PhoneScreen.Home, NavDirection.Back)
         }
     }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
     val tracks = rememberTrackIndex(model)
+    val reduceMotion = rememberReduceMotion()
+    // View Details: Now Playing for the playing song, otherwise its Song details.
+    val viewDetails: (TrackEntity) -> Unit = { t ->
+        if (t.id == state.current?.id) {
+            go(PhoneScreen.NowPlaying)
+        } else {
+            if (screen != PhoneScreen.SongDetails) {
+                detailsReturn = screen
+                detailsSource = sourceHere()
+            }
+            detailsId = t.id
+            go(PhoneScreen.SongDetails)
+        }
+    }
     PlaylistHost(model) {
-    androidx.compose.runtime.CompositionLocalProvider(LocalEditLyrics provides { t -> lyricsId = t.id; editReturn = screen; screen = PhoneScreen.EditLyrics }) {
-    ProvideEditSong({ t -> editingId = t.id; editReturn = screen; screen = PhoneScreen.EditTags }) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalEditLyrics provides { t -> lyricsId = t.id; editReturn = screen; go(PhoneScreen.EditLyrics) },
+        LocalViewDetails provides viewDetails,
+    ) {
+    ProvideEditSong({ t -> editingId = t.id; editReturn = screen; go(PhoneScreen.EditTags) }) {
         AnimatedContent(
             screen,
-            transitionSpec = { (fadeIn() + slideInHorizontally { it / 12 }) togetherWith fadeOut() },
+            transitionSpec = {
+                val step = { full: Int -> full / 12 }
+                when {
+                    reduceMotion -> fadeIn() togetherWith fadeOut()
+                    navDirection == NavDirection.Forward ->
+                        (fadeIn() + slideInHorizontally { step(it) }) togetherWith (fadeOut() + slideOutHorizontally { -step(it) })
+                    navDirection == NavDirection.Back ->
+                        (fadeIn() + slideInHorizontally { -step(it) }) togetherWith (fadeOut() + slideOutHorizontally { step(it) })
+                    else -> (fadeIn() + slideInHorizontally { step(it) }) togetherWith fadeOut()
+                }
+            },
             modifier = Modifier.fillMaxSize()
                 .swipeHorizontally { swipeRight ->
-                    phoneSwipeDestination(screen, swipeRight, nowPlayingReturn)?.let {
-                        if (it == PhoneScreen.Inbox) inboxReturn = screen
-                        screen = it
+                    val direction = if (swipeRight) NavDirection.Forward else NavDirection.Back
+                    phoneSwipeDestination(screen, swipeRight, nowPlayingReturn, detailsReturn)?.let {
+                        when (screen) {
+                            PhoneScreen.NowPlaying -> closeNowPlaying(direction)
+                            PhoneScreen.SongDetails -> go(it, direction)
+                            else -> enterFresh(it, direction)
+                        }
                     }
                 },
         ) { shown ->
             when (shown) {
                 PhoneScreen.Home -> PhoneHome(spin, art, onOpen = ::openScreen)
-                PhoneScreen.NowPlaying -> NowPlaying(model, state, spin, art, onClose = { screen = nowPlayingReturn })
-                PhoneScreen.Library -> PhoneLibrary(model, onBack = { screen = PhoneScreen.Home }, onPlayed = { openNowPlaying(PhoneScreen.Library) })
+                PhoneScreen.NowPlaying -> NowPlaying(
+                    model, state, spin, art, returnLabel = returnLabel(model, playSource),
+                    onClose = { closeNowPlaying(NavDirection.None) },
+                )
+                PhoneScreen.Library -> PhoneLibrary(model, libraryNav, onBack = { go(PhoneScreen.Home) }, onPlayed = { playSource = it })
                 PhoneScreen.Playlists -> PhonePlaylists(
                     model,
                     playlistActions,
-                    onBack = { screen = PhoneScreen.Home },
-                    onOpenLibrary = { screen = PhoneScreen.Library },
+                    selectedId = openPlaylistId,
+                    onSelect = { openPlaylistId = it },
+                    onPlayed = { playSource = PlaySource.Playlist(it) },
+                    onBack = { go(PhoneScreen.Home) },
+                    onOpenLibrary = { enterFresh(PhoneScreen.Library) },
                 )
-                PhoneScreen.Settings -> PhoneSettings(model, onBack = { screen = PhoneScreen.Home }, onChooseFolder, onCustomAccent = { picking = true })
+                PhoneScreen.SongDetails -> {
+                    val track = tracks[detailsId]
+                    if (track == null) {
+                        LaunchedEffect(Unit) { go(detailsReturn) }
+                    } else {
+                        PhoneSongDetails(
+                            model, track, state.current?.title, state.isPlaying,
+                            returnLabel = when (detailsReturn) {
+                                PhoneScreen.Playlists -> if (openPlaylistId != null) "playlist" else "playlists"
+                                else -> detailsReturn.name.lowercase()
+                            },
+                            onClose = { go(detailsReturn) },
+                            onPlay = {
+                                playFromDetails(model, track, detailsSource)
+                                playSource = detailsSource ?: PlaySource.Library
+                                go(PhoneScreen.NowPlaying)
+                            },
+                        )
+                    }
+                }
+                PhoneScreen.Settings -> PhoneSettings(model, onBack = { go(PhoneScreen.Home) }, onChooseFolder, onCustomAccent = { picking = true })
                 PhoneScreen.Inbox -> PhoneInbox(
                     model,
-                    onBack = { screen = inboxReturn },
+                    onBack = { go(inboxReturn) },
                     onOpenProgress = { exportTask?.let { progressDialogTaskId = it.id; hiddenProgressTaskId = null } },
                     onCancelExport = model::cancelPlaylistBundleExport,
                 )
@@ -249,7 +368,7 @@ private fun BoxScope.PhoneScreens(
         )
     }
     if (screen in setOf(PhoneScreen.Library, PhoneScreen.Playlists, PhoneScreen.Settings, PhoneScreen.Inbox) && state.current != null) {
-        MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { openNowPlaying(screen) }
+        MiniPlayer(model, state, Modifier.align(Alignment.BottomCenter)) { go(PhoneScreen.NowPlaying) }
     }
     if (picking) {
         PlatformBackHandler(enabled = true) { picking = false }
@@ -323,12 +442,27 @@ private fun ArcButton(label: String, x: Dp, y: Dp, rotation: Float, onClick: () 
     }
 }
 
+/** Where Now Playing's footer says a left swipe goes: the playlist, album or artist name, "library" or "home". */
+private fun returnLabel(model: AppModel, source: PlaySource?): String = when (source) {
+    null -> "home"
+    PlaySource.Library -> "library"
+    is PlaySource.Album -> model.albums.value.firstOrNull { it.key == source.key }?.name ?: "library"
+    is PlaySource.Artist -> source.name
+    is PlaySource.Playlist -> model.playlists.value.firstOrNull { it.id == source.id }?.name ?: "playlists"
+}
+
 @Composable
-private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, art: androidx.compose.ui.graphics.ImageBitmap?, onClose: () -> Unit) {
+private fun NowPlaying(
+    model: AppModel,
+    state: PlaybackState,
+    spin: DiscSpin,
+    art: androidx.compose.ui.graphics.ImageBitmap?,
+    returnLabel: String,
+    onClose: () -> Unit,
+) {
     val current = state.current
     val track = rememberTrackIndex(model)[current?.id]
     var menu by remember { mutableStateOf(false) }
-    var viewFileTrack by remember { mutableStateOf<TrackEntity?>(null) }
     Column(Modifier.fillMaxSize().padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             CircleIconButton("✕", "Close now playing", onClose)
@@ -347,32 +481,7 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
                 }
                 Box {
                     CircleIconButton("⋮", "More options") { menu = true }
-                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        val editSong = LocalEditSong.current
-                        val editLyrics = LocalEditLyrics.current
-                        val addToPlaylist = LocalAddToPlaylist.current
-                        for (item in listOf("Edit lyrics", "Edit metadata", "Add to playlist", "View file location")) {
-                            val ready = track != null
-                            DropdownMenuItem(
-                                text = { Text(item, color = if (ready) disc.text else disc.muted) },
-                                trailingIcon = { if (!ready) SoonTag() },
-                                onClick = {
-                                    menu = false
-                                    when {
-                                        !ready -> Unit
-                                        item == "Add to playlist" -> addToPlaylist(track!!)
-                                        item == "Edit lyrics" -> editLyrics(track!!)
-                                        item == "Edit metadata" -> editSong(track!!)
-                                        item == "View file location" -> viewFileTrack = track
-                                    }
-                                },
-                            )
-                        }
-                    }
-                viewFileTrack?.let { ft ->
-                    viewFileTrack = null
-                    viewFileLocation(ft.location, ft.folder)
-                }
+                    SongMenu(menu, { menu = false }, track, showDetails = false)
                 }
             }
         }
@@ -398,7 +507,7 @@ private fun NowPlaying(model: AppModel, state: PlaybackState, spin: DiscSpin, ar
         }
         Spacer(Modifier.weight(1f))
         Text(
-            "SWIPE LEFT TO CLOSE", Modifier.fillMaxWidth(), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.14.em,
+            "SWIPE LEFT TO RETURN TO ${returnLabel.uppercase()}", Modifier.fillMaxWidth(), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.14.em,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
