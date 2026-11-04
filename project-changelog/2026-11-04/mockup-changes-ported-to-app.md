@@ -71,3 +71,9 @@
 - These are visible behaviour changes on both platforms, as the project manager approved in the mockups.
 - **No database schema change:** reordering reuses the `position` column.
 - No new dependencies, permissions, environment variables, secrets or network access. The desktop runs `pactl`, `busctl` and `gsettings` locally with fixed arguments and short time limits.
+
+## Commit and push
+- **Time:** 2026-11-04, ~16:20 UTC. **Approved By:** Project manager
+- Commits on `ui`: `9775e94` (build command + packaging), `b3d55fb` (mockup port), `ca6bdd8` (mockup records and backups).
+- Fast-forwarded `origin/main` and `origin/ui` from `1bc9682` to `ca6bdd8` (no force push, no merge commit).
+- Checked first: no secrets in the diff, and the package binaries (`*.apk`, `*.deb`) stayed gitignored; only the build logs were committed.
