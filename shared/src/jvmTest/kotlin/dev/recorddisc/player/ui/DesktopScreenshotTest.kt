@@ -702,6 +702,8 @@ class DesktopScreenshotTest {
             assertEquals(null, nodeWithText(scene, "To audio file"), "the old SOON button is gone")
             click(scene, "Convert to Audio")
             assertNotNull(nodeWithText(scene, "CONVERT TO AUDIO"))
+            Thread.sleep(300)
+            assertEquals(null, model.convertTask.value, "desktop: opening the dialog starts nothing")
             assertNotNull(nodeWithText(scene, "FLAC · lossless"), "the first format this machine can make")
             assertTrue(field(scene, "Road Trip.flac"), "file name from the playlist")
             assertNotNull(nodeWithText(scene, "~/Music/Exports"))
@@ -715,6 +717,8 @@ class DesktopScreenshotTest {
             click(scene, "Convert")
             model.convertTask.await { it?.progress != null }
             settle(scene)
+            assertEquals(1L, model.convertTask.value?.id, "desktop: Convert started exactly one job")
+            assertEquals(null, nodeWithText(scene, "Another conversion is already running"))
             assertNotNull(nodeWithText(scene, "Song 2 of 4"))
             assertNotNull(nodeWithText(scene, "40%"))
             capture(scene, "47-convert-progress")
@@ -738,5 +742,114 @@ class DesktopScreenshotTest {
         } finally {
             scene.close()
         }
+    }
+
+    /**
+     * Regression (2026-11-05, reported on Android): opening Convert to Audio must not start anything,
+     * and Convert must start exactly one job when the platform runs it in the background
+     * (startBackgroundConversion), then show the progress popup, not "Another conversion…".
+     */
+    @Test
+    fun convertStartsOnlyOnConvertAndOnlyOnce() {
+        val base = MockupPlatform()
+        val gate = CompletableDeferred<Unit>()
+        val platform = object : LibraryPlatform by base {
+            override fun convertFormats() = listOf(dev.recorddisc.player.convert.ConvertFormatOption(dev.recorddisc.player.convert.ConvertFormat.Flac))
+            override val convertDefaultFolder = "Music/Exports"
+            override suspend fun convertPlaylist(job: dev.recorddisc.player.convert.ConvertJob, onProgress: (dev.recorddisc.player.convert.ConvertProgress) -> Unit): dev.recorddisc.player.convert.ConvertSaved {
+                onProgress(dev.recorddisc.player.convert.ConvertProgress(0, job.inputs.size, 0.1f))
+                gate.await()
+                return dev.recorddisc.player.convert.ConvertSaved("Music/Exports/${job.fileName}", "content://x", null)
+            }
+        }
+        val model = model(platform)
+        model.scan(base.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        val playlist = runBlocking { model.createPlaylist("Road Trip").also { p -> tracks.forEach { model.addToPlaylist(p.id, it.id) } } }
+        model.playlists.await { lists -> lists.any { it.id == playlist.id && it.songCount == 4 } }
+        var backgroundStarts = 0
+        val actions = PlaylistFileActions(startBackgroundConversion = { id, name, options ->
+            backgroundStarts++
+            model.startConversion(id, name, options)
+        })
+        val scene = scene(model, view = DesktopView.Playlists, playlistId = playlist.id, playlistActions = actions)
+        try {
+            click(scene, "Convert to Audio")
+            Thread.sleep(300)
+            settle(scene)
+            assertEquals(null, model.convertTask.value, "opening the dialog starts nothing")
+            assertEquals(0, backgroundStarts)
+            click(scene, "Convert")
+            model.convertTask.await { it?.progress != null }
+            settle(scene)
+            assertEquals(1, backgroundStarts, "started once, through the background path")
+            assertEquals(null, nodeWithText(scene, "Another conversion is already running"))
+            assertNotNull(nodeWithText(scene, "Song 1 of 4"), "the progress popup shows")
+            gate.complete(Unit)
+        } finally {
+            scene.close()
+        }
+    }
+
+    /**
+     * F-Droid store screenshots (fastlane/metadata/android/en-US/images/phoneScreenshots): the phone
+     * app at 1080×2340 with the made-up sample library, so no real music or personal data appears.
+     * Only runs when asked: STORE_SCREENSHOTS=1 ./gradlew --no-daemon :shared:jvmTest --tests '*storeScreenshots'
+     */
+    @Test
+    fun storeScreenshots() {
+        org.junit.Assume.assumeTrue("set STORE_SCREENSHOTS=1 to render store screenshots", System.getenv("STORE_SCREENSHOTS") == "1")
+        val base = MockupPlatform()
+        val platform = object : LibraryPlatform by base {
+            override fun convertFormats() = listOf(
+                dev.recorddisc.player.convert.ConvertFormat.Flac, dev.recorddisc.player.convert.ConvertFormat.M4a,
+                dev.recorddisc.player.convert.ConvertFormat.Opus, dev.recorddisc.player.convert.ConvertFormat.Wav,
+            ).map { dev.recorddisc.player.convert.ConvertFormatOption(it) }
+            override val convertDefaultFolder = "Music/Exports"
+            override fun folderLabel(folder: String) = "Music" // as a phone shows it
+        }
+        val player = FakePlayer()
+        val model = model(platform, player)
+        model.scan(base.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        runBlocking {
+            model.createPlaylist("Road Trip").also { p -> tracks.forEach { model.addToPlaylist(p.id, it.id) } }
+            model.createPlaylist("Late Night").also { p -> tracks.take(2).forEach { model.addToPlaylist(p.id, it.id) } }
+        }
+        model.playlists.await { it.size == 2 }
+        val midnight = tracks.indexOfFirst { it.title == "Midnight Drive" }
+        model.play(tracks, midnight)
+        player.seekTo(27_000)
+        player.play()
+        player.state.value = player.state.value.copy(durationMs = 222_000) // the sample song's 3:42
+        val dir = File(out.parentFile, "store").apply { mkdirs() }
+        var n = 0
+        fun shoot(name: String, steps: (ImageComposeScene) -> Unit) {
+            val scene = ImageComposeScene(1080, 2340, Density(2.625f)) { PhoneApp(model, onChooseFolder = {}) }
+            try {
+                settle(scene)
+                steps(scene)
+                settle(scene)
+                val png = scene.render(4_000_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes
+                File(dir, "${++n}_$name.png").writeBytes(png)
+                assertTrue(png.size > 50_000, "$name rendered")
+            } finally {
+                scene.close()
+            }
+        }
+        model.setShowLyrics(true)
+        model.settings.await { it?.showLyrics == true }
+        shoot("now-playing") { click(it, "Open now playing") }
+        shoot("home") { }
+        shoot("library") { click(it, "LIBRARY") }
+        shoot("playlist") { click(it, "PLAYLISTS"); click(it, "Road Trip") }
+        shoot("convert-to-audio") { click(it, "PLAYLISTS"); click(it, "Road Trip"); click(it, "Convert to Audio") }
+        shoot("settings") { click(it, "SETTINGS") }
     }
 }

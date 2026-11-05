@@ -220,8 +220,11 @@ fun ConvertDialog(model: AppModel, playlist: PlaylistView, actions: PlaylistFile
                     fileName = ConvertRules.withExtension(fileName, format),
                     destination = chosen?.location, destinationLabel = chosen?.label,
                 )
-                val failure = actions.startBackgroundConversion?.invoke(playlist.id, playlist.name, request)
-                    ?: model.startConversion(playlist.id, playlist.name, request)
+                // Android starts it with its background service; desktop calls the model directly.
+                // (Not `?:`: the service path returns null on success, which must not start it twice.)
+                val startInBackground = actions.startBackgroundConversion
+                val failure = if (startInBackground != null) startInBackground(playlist.id, playlist.name, request)
+                else model.startConversion(playlist.id, playlist.name, request)
                 if (failure != null) problem = failure else startedId = model.convertTask.value?.id
             }) { Text("Convert") }
         },
