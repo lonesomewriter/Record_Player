@@ -14,6 +14,7 @@ Read [AGENTS.md](../AGENTS.md) and the files in [project-guidelines/](../project
 | `androidApp/` | Android entry point, the background playback service (Media3, lock-screen/notification controls) and the Android converter (MediaCodec). |
 | `desktopApp/` | Linux desktop entry point and `.deb` packaging (including the menu entry in `packaging/linux/`). |
 | `scripts/` | `build.sh`: builds, checks and files the Android APK and Linux `.deb`. |
+| `iosApp/` | An early iOS screen port in Swift (built with Xcode, not part of the Gradle build). |
 
 ## Requirements
 
