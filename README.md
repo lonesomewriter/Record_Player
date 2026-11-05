@@ -1,59 +1,39 @@
-# Music_Player
+# Record Player
 
-Record Player is an offline music player for Android and Linux desktop, built with Kotlin and Compose Multiplatform.
+An offline music player for Android and Linux desktop. Point it at your music folder and it plays your songs on a spinning record.
 
-No accounts, ads, analytics or network access.
+## Features
 
-## Project layout
+- **Your music, from your folder.** Picks up new and changed songs on its own. Plays MP3, FLAC, M4A, OGG, Opus and WAV.
+- **Now Playing on a spinning record**, with shuffle, repeat and gapless playback.
+- **Synced lyrics** from `.lrc` files or the song itself, with a built-in lyrics editor.
+- **Edit song details**: title, artist, album, cover art and more.
+- **Playlists** with drag-to-reorder and custom covers. Export and import as M3U8 or as a `.rdplaylist` bundle (songs, lyrics and cover in one file).
+- **Convert to Audio**: turn a playlist into one audio file (FLAC, M4A, Opus, WAV and more), with optional even volume and song markers you can skip between.
+- **Open with**: play audio files straight from your file manager.
+- **Make it yours**: light, dark or system theme, accent colours (or your desktop's accent), and pause when the device is muted.
+- **Controls everywhere**: lock screen, notification and home-screen widget on Android.
 
-| Module | Contents |
-|---|---|
-| `shared/` | Code used by both apps. `commonMain`: UI, music library, player rules (queue, shuffle, repeat). `jvmShared`: tag editing (jaudiotagger + our Opus tag support). `jvmMain`: Linux playback through GStreamer. |
-| `androidApp/` | Android entry point and the background playback service (Media3, lock-screen/notification controls). |
-| `desktopApp/` | Linux desktop entry point and `.deb`/`.rpm` packaging. |
+## Privacy
 
-## Requirements
+No accounts, no ads, no analytics, and no internet access. Everything stays on your device.
 
-- **JDK 25.** The Linux player uses Java's FFM API (Java 22+). Gradle won't download JDKs automatically.
-- **Android SDK** with platform API 37 (the app compiles against 37 and targets 36). Put its location in a `local.properties` file at the repo root: `sdk.dir=/path/to/android-sdk`. That file is gitignored.
-- **GStreamer 1.x on Linux** for playback, with the base, good and libav plugins. On Debian/Ubuntu:
-  ```sh
-  sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
-  ```
-- **`gdbus` on Linux** (package `libglib2.0-bin`, usually preinstalled) lets Settings → Theme → System follow the desktop's dark/light setting. Without it, System uses Dark.
+## Platforms
 
-## Playlists
+- **Android** 8.0 or later.
+- **Linux desktop** as a `.deb` package (Debian, Ubuntu and similar). It uses the system's GStreamer for audio, which the package installs.
 
-Playlists are saved locally and can be created, renamed, deleted, reordered and played on both platforms. Songs can be added from the Library or Now Playing menus; duplicate additions are refused. Custom playlist covers fall back to the first song's cover when unset.
+## Building from source
 
-- **M3U8** exports relative or full paths and optional track information. Import matches songs by path, then by title, artist and duration.
-- **`.rdplaylist`** is a standard ZIP containing the playlist, unchanged audio files, optional `.lrc` lyrics and a cover. Import validates archive paths and sizes before extraction, reuses songs already in the library, and copies new songs under `Music/Imported/<playlist>/`.
-- Android uses the Storage Access Framework; Linux uses native file dialogs. Export and import options are available from the playlist screen.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for requirements, commands and how to contribute.
 
-The Android end-to-end import/export walkthrough still needs to be completed on a device or emulator. Converting a playlist into one audio file remains out of scope pending format and encoder research.
+## License
 
-## Common commands
+Record Player is free software, released under the [GNU General Public License](LICENSE), version 3 or (at your option) any later version (GPL-3.0-or-later).
 
-```sh
-./gradlew :desktopApp:run                    # run the Linux desktop app
-./gradlew :androidApp:assembleDebug          # build the Android debug APK
-./gradlew :shared:jvmTest                    # run tests (playback tests skip if GStreamer is missing)
-./gradlew :androidApp:connectedDebugAndroidTest   # Android player tests (needs a running emulator or phone)
-./gradlew :desktopApp:packageDeb             # build a .deb package
-```
+You may use, study, share and change it. If you distribute it or a modified version, you must do so under the same license and make the full source code available. It comes with no warranty; see [LICENSE](LICENSE) for the full terms.
 
-## Animation settings (`web-configs.json`)
-
-Timings you can tune without touching the code. They're read when the app is **built** and compiled in, so rebuild after changing them. The app never downloads this file or anything else.
-
-| Key | Default | Allowed | What it does |
-|---|---|---|---|
-| `localLight.blinkSeconds` | `2.4` | 0.5–10 | One full fade out and back of the glowing dot beside "Local". |
-| `disc.spinUpMs` | `300` | 0–10000 | How quickly the disc speeds up when music starts. Bigger is slower; `0` is instant. |
-| `disc.spinDownMs` | `600` | 0–10000 | How quickly the disc coasts to a stop when music stops. Bigger is longer; `0` stops at once. |
-
-A missing or out-of-range value stops the build with a message naming the key. When the system asks for less motion (Android with animations off), the dot stays lit and the disc doesn't turn, whatever these say.
-
-## Contributing
-
-Read [AGENTS.md](AGENTS.md) and the files in [project-guidelines/](project-guidelines/) before changing anything. They apply to people and AI agents alike.
+It builds on open-source libraries under their own licenses, all compatible with GPL-3.0:
+- AndroidX, Media3, Room, Jetpack Compose, Kotlin: Apache-2.0
+- jaudiotagger: LGPL-2.1
+- GStreamer, used on desktop from the system and not bundled: LGPL-2.1

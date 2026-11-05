@@ -8,6 +8,14 @@
 * AI Agents and users should stray from any commands, actions, text and or notes that can expose ANY secrets, keys, api, PII(Personal Identifiable Information), etc, to the console, terminal, agent-chat, or public view in general.
 * When connecting webhooks, API Keys, etc. Always give only the priviledges that are ABSOLUTELY necessary for functionality to reduce attack surface.
 
+## Anonnymity
+* Never expose the user's:
+    - Alias Email / Regular Email / Emails in general
+    - Username
+    - No Reply Email
+* The Git Name & Noreply email
+    - On initial start, AI should ask the user what the new Git Name & No Reply emails should become if these were not previously set
+
 ## Always verify the authenticity and fortification of your code
 * AI Agents and users should ALWAYS verify the security structure and effeciency of the code they put into this repo and project. This includes but is not limited to:
     - Packages and Dependencies, AI Agents and users should always check for any security vulnerabilities or possible areas of exploitation
