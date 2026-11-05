@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -57,6 +58,7 @@ import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.library.Album
 import dev.recorddisc.player.library.Artist
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.isOutside
 import dev.recorddisc.player.library.displayTitle
 import kotlin.math.max
 
@@ -214,11 +216,20 @@ private fun Gone(what: String) =
  */
 val LocalViewDetails = staticCompositionLocalOf<((TrackEntity) -> Unit)?> { null }
 
+/** Label for a file opened from a file manager that isn't in the library. */
+const val OUTSIDE_FILE_LABEL = "Opened from Files · not in your library"
+
+/** Why a file opened from a file manager can only be played. */
+const val OUTSIDE_FILE_NOTE =
+    "Opened from Files: Record Player can only play this file, so editing and playlists are off. To keep it, put it in your music folder."
+
 /**
- * The one ⋮ song menu used everywhere (2026-11-04 mockups): View Details, Edit lyrics,
- * Edit metadata, Add to playlist, View file location. Inside a playlist, a divider and
- * Remove from playlist follow. [showDetails] is false where you're already on the song's
- * details (Now Playing, Song details). A null [track] greys every item out.
+ * The one ⋮ song menu used everywhere (2026-11-04 mockups): View Details, View Location,
+ * Edit lyrics, Edit metadata, Add to playlist. Inside a playlist, a divider and Remove from
+ * playlist follow. [showDetails] is false where you're already on the song's details (Now
+ * Playing, Song details). A null [track] greys every item out. A file opened from a file
+ * manager that isn't in the library ([isOutside]) can only be played, so the rest are greyed
+ * out under a note saying why.
  */
 @Composable
 fun SongMenu(
@@ -235,11 +246,19 @@ fun SongMenu(
     val addToPlaylist = LocalAddToPlaylist.current
     DropdownMenu(expanded, onDismissRequest = onDismiss) {
         val run: ((TrackEntity) -> Unit) -> () -> Unit = { action -> { onDismiss(); track?.let(action) } }
+        val outside = track?.isOutside == true
+        val usable = track != null && !outside
+        if (outside) {
+            Text(
+                OUTSIDE_FILE_NOTE, Modifier.widthIn(max = 260.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+                color = disc.muted, fontSize = 11.sp, lineHeight = 15.sp,
+            )
+        }
         if (showDetails && viewDetails != null) SongMenuItem("View Details", track != null, onClick = run(viewDetails))
-        SongMenuItem("Edit lyrics", track != null, onClick = run(editLyrics))
-        SongMenuItem("Edit metadata", track != null, onClick = run(editSong))
-        SongMenuItem("Add to playlist", track != null, onClick = run(addToPlaylist))
-        SongMenuItem("View file location", track != null, onClick = run { viewFileTrack = it })
+        SongMenuItem("View Location", usable, onClick = run { viewFileTrack = it })
+        SongMenuItem("Edit lyrics", usable, onClick = run(editLyrics))
+        SongMenuItem("Edit metadata", usable, onClick = run(editSong))
+        SongMenuItem("Add to playlist", usable, onClick = run(addToPlaylist))
         if (onRemoveFromPlaylist != null) {
             HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = disc.line)
             SongMenuItem("Remove from playlist", track != null, danger = true, onClick = run { onRemoveFromPlaylist() })

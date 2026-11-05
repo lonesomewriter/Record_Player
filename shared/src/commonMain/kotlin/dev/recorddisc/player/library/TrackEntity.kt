@@ -33,6 +33,16 @@ data class TrackEntity(
     val lyricsLocation: String? = null,
 )
 
+/**
+ * A file opened from a file manager ("Open with") that isn't in the library. It is never stored,
+ * can only be played, and uses this ID so it can't match a library song.
+ */
+const val OUTSIDE_TRACK_ID = -1L
+
+/** True for a file opened from a file manager that isn't in the library: play only. */
+val TrackEntity.isOutside: Boolean
+    get() = id == OUTSIDE_TRACK_ID
+
 /** Title to show: the tag title, or the file name without extension. */
 val TrackEntity.displayTitle: String
     get() = title ?: fileName.substringBeforeLast('.')

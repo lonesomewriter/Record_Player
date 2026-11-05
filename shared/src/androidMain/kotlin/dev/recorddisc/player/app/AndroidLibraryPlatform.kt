@@ -23,6 +23,8 @@ import dev.recorddisc.player.library.PlaylistBundlePreview
 import dev.recorddisc.player.library.PlaylistBundlePreviewSong
 import dev.recorddisc.player.library.PlaylistTextFile
 import dev.recorddisc.player.library.SafFolderLibrarySource
+import dev.recorddisc.player.library.FileEntry
+import dev.recorddisc.player.library.TrackTags
 import dev.recorddisc.player.library.SavedFile
 import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.library.TagEdit
@@ -54,6 +56,10 @@ class AndroidLibraryPlatform(context: Context) : LibraryPlatform {
 
     override val suggestedFolder: String? = null
     override fun currentTimeMs(): Long = System.currentTimeMillis()
+
+    // Reading tags only needs the file's own URI (here, one a file manager handed over), not the folder.
+    override suspend fun readFileTags(location: String): TrackTags =
+        SafFolderLibrarySource(context, Uri.EMPTY).readTags(FileEntry(location, "", 0, 0))
 
     private val saver = BackupThenOverwrite(SafDocuments(), File(context.filesDir, "tag-edit"))
 

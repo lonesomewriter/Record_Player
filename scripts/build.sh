@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record Player: build the Android APK and the Linux desktop .deb, check them, and file them
-# under project-builds/ with a summary log. Follows project-guidelines/build_packaging.md.
+# under project-builds/ with a summary log. Follows project-guidelines/linux_packaging.md.
 #
 # Usage:
 #   scripts/build.sh [dev|release] [--android] [--desktop]
@@ -247,6 +247,29 @@ if ((WANT_DESKTOP)); then
     ((${#missing[@]} == 0)) && check 0 "Declares GStreamer" "${DEB_DEPENDS_REQUIRED[*]}" || check 1 "Declares GStreamer" "Depends is missing: ${missing[*]}"
 
     dpkg-deb -x "$DEB" "$WORK/deb"
+
+    # Menu entry (linux_packaging.md): Exec and Icon point at shipped files, it passes
+    # desktop-file-validate, and it lists the audio types so file managers offer "Open with".
+    DESKTOP="$(find "$WORK/deb" -name '*.desktop' -path '*/lib/*' -print -quit)"
+    if [[ -f "$DESKTOP" ]]; then
+      EXEC_BIN="$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$DESKTOP")"; ICON_FILE="$(sed -n 's/^Icon=//p' "$DESKTOP")"
+      [[ -x "$WORK/deb$EXEC_BIN" && -f "$WORK/deb$ICON_FILE" ]] \
+        && check 0 "Menu entry paths" "Exec $EXEC_BIN, Icon $ICON_FILE (both shipped)" \
+        || check 1 "Menu entry paths" "Exec '$EXEC_BIN' or Icon '$ICON_FILE' isn't in the package"
+      if grep -q '^MimeType=.*audio/mpeg;.*audio/flac;' "$DESKTOP" && grep -q '^Exec=.* %F$' "$DESKTOP"; then
+        check 0 "Open with" "lists audio types; Exec passes the chosen file (%F)"
+      else
+        check 1 "Open with" "MimeType or Exec %F missing: $(grep -E '^(Exec|MimeType)=' "$DESKTOP" | tr '\n' ' ' | cut -c1-160)"
+      fi
+      if command -v desktop-file-validate >/dev/null; then
+        desktop-file-validate "$DESKTOP" > "$WORK/desktop-validate.log" 2>&1 \
+          && check 0 "desktop-file-validate" "no errors" || check 1 "desktop-file-validate" "$(grep -m1 error "$WORK/desktop-validate.log" | cut -c1-200)"
+      else
+        info "desktop-file-validate isn't installed (package desktop-file-utils), so the menu entry wasn't validated."
+      fi
+    else
+      check 1 "Menu entry" "no .desktop file in the package"
+    fi
     APP_DIR="$(dirname "$(find "$WORK/deb" -path '*/lib/app/*.cfg' -print -quit 2>/dev/null)")"
     if [[ -d "$APP_DIR" ]]; then
       # jpackage leaves out the runtime's bin/java; the app's launcher loads libjvm.so directly.
@@ -261,7 +284,9 @@ if ((WANT_DESKTOP)); then
       LAUNCHER="$(dirname "$(dirname "$APP_DIR")")/bin/$DEB_PACKAGE"
       chmod -R u+rwX "$WORK/deb"
       mkdir -p "$WORK/home"
-      env -u DISPLAY -u WAYLAND_DISPLAY HOME="$WORK/home" JAVA_TOOL_OPTIONS=-Djava.awt.headless=true \
+      # XDG_RUNTIME_DIR too: the app keeps its one-window socket there, which must not touch a real session.
+      mkdir -p "$WORK/runtime" && chmod 700 "$WORK/runtime"
+      env -u DISPLAY -u WAYLAND_DISPLAY HOME="$WORK/home" XDG_RUNTIME_DIR="$WORK/runtime" JAVA_TOOL_OPTIONS=-Djava.awt.headless=true \
         timeout 40 "$LAUNCHER" > "$WORK/launch.log" 2>&1 && launch_rc=0 || launch_rc=$?
       if grep -qE 'NoClassDefFoundError|ClassNotFoundException|UnsatisfiedLinkError|FindException|ResolutionException|module .* not found' "$WORK/launch.log"; then
         check 1 "Packaged app starts" "$(grep -m1 -E 'NoClassDefFoundError|ClassNotFoundException|UnsatisfiedLinkError|FindException|ResolutionException|module .* not found' "$WORK/launch.log" | cut -c1-200)"
@@ -271,7 +296,7 @@ if ((WANT_DESKTOP)); then
         check 1 "Packaged app starts" "exit $launch_rc: $(grep -m1 -E 'Exception|Error' "$WORK/launch.log" | cut -c1-200)"
       fi
 
-      # Known error (build_packaging.md): kotlin-stdlib missing -> NoClassDefFoundError on start.
+      # Known error (linux_packaging.md): kotlin-stdlib missing -> NoClassDefFoundError on start.
       STDLIB="$(ls "$APP_DIR" | grep -E '^kotlin-stdlib-[0-9].*\.jar$' | sed -n 1p || true)"
       COROUTINES="$(ls "$APP_DIR" | grep -E '^kotlinx-coroutines-core-jvm-.*\.jar$' | sed -n 1p || true)"
       [[ -n "$STDLIB" ]] && check 0 "Known error: kotlin-stdlib bundled" "$STDLIB" || check 1 "Known error: kotlin-stdlib bundled" "kotlin-stdlib jar MISSING"

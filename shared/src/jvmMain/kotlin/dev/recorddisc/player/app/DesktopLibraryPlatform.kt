@@ -2,6 +2,9 @@ package dev.recorddisc.player.app
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import dev.recorddisc.player.convert.ConvertJob
+import dev.recorddisc.player.convert.ConvertProgress
+import dev.recorddisc.player.convert.DesktopConvert
 import dev.recorddisc.player.library.DesktopPaths
 import dev.recorddisc.player.library.DesktopLyricsSaver
 import dev.recorddisc.player.library.DesktopTagSaver
@@ -23,6 +26,7 @@ import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TrackEntity
 import dev.recorddisc.player.library.displayTitle
 import dev.recorddisc.player.tags.TagReader
+import dev.recorddisc.player.library.TrackTags
 import dev.recorddisc.player.tags.PlaylistBundle
 import dev.recorddisc.player.tags.PlaylistBundleSong
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +52,12 @@ class DesktopLibraryPlatform(private val dataDirectory: File = DesktopPaths.data
     override fun currentTimeMs(): Long = System.currentTimeMillis()
 
     override fun sourceFor(folder: String): LibrarySource = FolderLibrarySource(listOf(File(folder)))
+
+    override suspend fun readFileTags(location: String): TrackTags = withContext(Dispatchers.IO) { TagReader.read(File(location)) }
+
+    override fun convertFormats() = DesktopConvert.formats()
+    override val convertDefaultFolder: String get() = DesktopConvert.shown(DesktopConvert.exportsFolder())
+    override suspend fun convertPlaylist(job: ConvertJob, onProgress: (ConvertProgress) -> Unit) = DesktopConvert.convert(job, onProgress)
 
     override fun watch(folder: String, onChange: () -> Unit): AutoCloseable = FolderWatcher(File(folder).toPath(), onChange)
 

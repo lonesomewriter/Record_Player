@@ -46,6 +46,8 @@ object DiscIcons {
     val Plus = stroked("Plus", 1.8f, "M12 5v14M5 12h14")
     val Import = stroked("Import", 1.8f, "M12 3v12", "m7 10 5 5 5-5", "M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6")
     val Check = stroked("Check", 2f, "m5 12.5 4.5 4.5L19 7.5")
+    val Inbox = stroked("Inbox", 1.8f, "M4 13h4l2 3h4l2-3h4", "M5.5 5h13l1.5 8v6H4v-6z")
+    val Folder = stroked("Folder", 1.8f, "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z")
     val Home = stroked("Home", 1.8f, "M3 11.5 12 4l9 7.5", "M5 10v10h14V10")
     val Library = stroked("Library", 1.8f, "M5 4h3v16H5zM11 4h3v16h-3z", "m17.5 5 2.8 14")
     val Playlist = stroked("Playlist", 1.8f, "M4 6h12M4 12h12M4 18h7", "m17 14 4 2-4 2z")

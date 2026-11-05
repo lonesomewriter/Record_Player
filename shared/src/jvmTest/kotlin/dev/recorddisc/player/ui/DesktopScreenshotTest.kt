@@ -529,7 +529,7 @@ class DesktopScreenshotTest {
         val detailsScene = scene(model, view = DesktopView.Playlists, playlistId = playlist.id)
         try {
             click(detailsScene, "More options")
-            for (item in listOf("View Details", "Edit lyrics", "Edit metadata", "Add to playlist", "View file location", "Remove from playlist")) {
+            for (item in listOf("View Details", "View Location", "Edit lyrics", "Edit metadata", "Add to playlist", "Remove from playlist")) {
                 assertNotNull(nodeWithText(detailsScene, item), "playlist song menu has $item")
             }
             assertEquals(null, nodeWithText(detailsScene, "Move up"), "Move up is gone")
@@ -598,6 +598,145 @@ class DesktopScreenshotTest {
             File(phoneDir, "now-playing.png").writeBytes(phone.render(6_000_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes)
         } finally {
             phone.close()
+        }
+    }
+
+    /**
+     * "Open with" (2026-11-04): a file that isn't in the library plays on its own, marked "Opened
+     * from Files"; editing and playlists are off. Desktop shows it on Home, the phone on Now Playing.
+     */
+    @Test
+    fun anOpenedOutsideFileIsMarkedAndPlayOnly() {
+        val platform = MockupPlatform()
+        val model = model(platform)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        model.tracks.await { it.size == 4 }
+        val opened = kotlinx.coroutines.flow.MutableSharedFlow<dev.recorddisc.player.app.OpenedAs>(replay = 1)
+        val result = runBlocking { model.openFile(dev.recorddisc.player.app.OpenedFile("/home/you/Downloads/Demo Take 3.m4a", "Demo Take 3.m4a", 4_000)) }
+        assertEquals(dev.recorddisc.player.app.OpenedAs.OutsideFile, result)
+        opened.tryEmit(result)
+
+        // Desktop: opened while on Library, the window switches to Home.
+        val desktop = ImageComposeScene(1440, 852, Density(1f)) {
+            DesktopApp(model, chooseFolder = { null }, startView = DesktopView.Library, appVersion = "0.1.0", openedFiles = opened)
+        }
+        try {
+            settle(desktop)
+            assertNotNull(nodeWithText(desktop, "Now spinning".uppercase()), "shown on Home")
+            assertNotNull(nodeWithText(desktop, "Demo Take 3"), "file name as the title (no tags)")
+            assertNotNull(nodeWithText(desktop, OUTSIDE_FILE_LABEL))
+            assertNotNull(nodeWithText(desktop, OUTSIDE_FILE_NOTE))
+            assertEquals(null, nodeWithText(desktop, "Local file"))
+            fun SemanticsNode.says(text: String) = config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == text }
+            val edit = nodes(desktop).first { node ->
+                node.config.contains(SemanticsActions.OnClick) && (node.says("Edit metadata") || node.children.any { it.says("Edit metadata") })
+            }
+            assertTrue(edit.config.contains(SemanticsProperties.Disabled), "Edit metadata is off")
+            capture(desktop, "45-opened-outside-file")
+        } finally {
+            desktop.close()
+        }
+
+        // Phone: Now Playing opens with the label; the ⋮ menu keeps only View Details-free play actions.
+        val phoneDir = File(out.parentFile, "phone").apply { mkdirs() }
+        val phone = ImageComposeScene(412, 900, Density(1f)) { PhoneApp(model, onChooseFolder = {}, openedFiles = opened) }
+        try {
+            settle(phone)
+            assertNotNull(nodeWithText(phone, OUTSIDE_FILE_LABEL), "Now Playing shows the label")
+            assertNotNull(nodeWithText(phone, "SWIPE LEFT TO RETURN TO HOME"), "leaving goes Home")
+            click(phone, "More options")
+            assertNotNull(nodeWithText(phone, OUTSIDE_FILE_NOTE))
+            for (item in listOf("View Location", "Edit lyrics", "Edit metadata", "Add to playlist")) {
+                val node = assertNotNull(nodes(phone).firstOrNull { n -> n.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == item } }, item)
+                val disabled = generateSequence(node) { it.parent }.take(4).any { it.config.contains(SemanticsProperties.Disabled) }
+                assertTrue(disabled, "$item is off for an outside file")
+            }
+            val png = phone.render(3_000_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes
+            File(phoneDir, "phone-opened-outside-file.png").writeBytes(png)
+        } finally {
+            phone.close()
+        }
+    }
+
+    /**
+     * Convert to Audio (2026-11-04 mockups): the button (no SOON), the dialog, the progress popup,
+     * closing it ("Still converting — it's in your Inbox"), the desktop Inbox with its % badge,
+     * and the finished card with Dismiss.
+     */
+    @Test
+    fun convertToAudioDialogProgressAndInbox() {
+        val base = MockupPlatform()
+        val gate = CompletableDeferred<Unit>()
+        val platform = object : LibraryPlatform by base {
+            override fun convertFormats() = dev.recorddisc.player.convert.ConvertFormat.entries.map {
+                dev.recorddisc.player.convert.ConvertFormatOption(it, available = it != dev.recorddisc.player.convert.ConvertFormat.M4a, note = "needs gstreamer1.0-libav".takeIf { _ -> it == dev.recorddisc.player.convert.ConvertFormat.M4a })
+            }
+            override val convertDefaultFolder = "~/Music/Exports"
+            override suspend fun convertPlaylist(job: dev.recorddisc.player.convert.ConvertJob, onProgress: (dev.recorddisc.player.convert.ConvertProgress) -> Unit): dev.recorddisc.player.convert.ConvertSaved {
+                onProgress(dev.recorddisc.player.convert.ConvertProgress(1, job.inputs.size, 0.4f))
+                gate.await()
+                return dev.recorddisc.player.convert.ConvertSaved("~/Music/Exports/${job.fileName}", "/home/you/Music/Exports/${job.fileName}", "/home/you/Music/Exports")
+            }
+        }
+        val model = model(platform)
+        model.scan(base.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        val tracks = model.tracks.await { it.size == 4 }
+        val playlist = runBlocking { model.createPlaylist("Road Trip").also { p -> tracks.forEach { model.addToPlaylist(p.id, it.id) } } }
+        model.playlists.await { lists -> lists.any { it.id == playlist.id && it.songCount == 4 } }
+        fun hasText(scene: ImageComposeScene, part: String) = nodes(scene).any { node ->
+            node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { part in it.text }
+        }
+        fun field(scene: ImageComposeScene, value: String) = nodes(scene).any { node ->
+            node.config.contains(SemanticsProperties.EditableText) && node.config[SemanticsProperties.EditableText].text == value
+        }
+
+        val scene = scene(model, view = DesktopView.Playlists, playlistId = playlist.id)
+        try {
+            settle(scene)
+            assertEquals(null, nodeWithText(scene, "To audio file"), "the old SOON button is gone")
+            click(scene, "Convert to Audio")
+            assertNotNull(nodeWithText(scene, "CONVERT TO AUDIO"))
+            assertNotNull(nodeWithText(scene, "FLAC · lossless"), "the first format this machine can make")
+            assertTrue(field(scene, "Road Trip.flac"), "file name from the playlist")
+            assertNotNull(nodeWithText(scene, "~/Music/Exports"))
+            assertTrue(hasText(scene, "Converted on this device. Nothing is uploaded."))
+            assertNotNull(nodeWithText(scene, dev.recorddisc.player.convert.ConvertFormat.Flac.marksNote))
+            click(scene, "Longer gap")
+            click(scene, "Longer gap")
+            assertTrue(field(scene, "2"), "the gap went up by one second twice")
+            capture(scene, "46-convert-dialog")
+
+            click(scene, "Convert")
+            model.convertTask.await { it?.progress != null }
+            settle(scene)
+            assertNotNull(nodeWithText(scene, "Song 2 of 4"))
+            assertNotNull(nodeWithText(scene, "40%"))
+            capture(scene, "47-convert-progress")
+
+            click(scene, "Hide conversion progress")
+            assertTrue(hasText(scene, "Still converting — it's in your Inbox"), "closing says where it went")
+            click(scene, "Inbox")
+            assertNotNull(nodeWithText(scene, "Converting “Road Trip”"))
+            assertTrue(nodes(scene).count { n -> n.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == "40%" } } >= 2, "card % and sidebar badge")
+            assertNotNull(nodeWithText(scene, "Open progress"))
+            capture(scene, "48-desktop-inbox-converting")
+
+            gate.complete(Unit)
+            model.convertTask.await { it?.status == dev.recorddisc.player.app.ConvertStatus.Completed }
+            settle(scene)
+            assertNotNull(nodeWithText(scene, "Converted “Road Trip”"))
+            assertNotNull(nodeWithText(scene, "Saved to ~/Music/Exports/Road Trip.flac"))
+            assertNotNull(nodeWithText(scene, "Show in folder"))
+            click(scene, "Dismiss")
+            assertNotNull(nodeWithText(scene, "No background tasks yet."))
+        } finally {
+            scene.close()
         }
     }
 }

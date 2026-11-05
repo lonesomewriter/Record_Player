@@ -31,6 +31,16 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Open with" for audio files from a file manager. Only lists the app; Android never
+                 makes it the default unless the user picks "Always". The file manager grants read
+                 access to the one file, so no storage permission is needed. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
+            </intent-filter>
         </activity>
 
         <!-- Exported so the system's media controls can reach it; PlaybackService only accepts trusted callers. -->
@@ -63,6 +73,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:name=".export.PlaylistExportService" />
+
+        <!-- Convert to Audio in the background (progress notification, Cancel). -->
+        <service
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:name=".convert.ConvertService" />
     </application>
 
 </manifest>

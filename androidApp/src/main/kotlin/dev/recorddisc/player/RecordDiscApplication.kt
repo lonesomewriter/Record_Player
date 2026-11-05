@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import dev.recorddisc.player.app.AndroidLibraryPlatform
 import dev.recorddisc.player.app.AppModel
+import dev.recorddisc.player.convert.AndroidConvertPlatform
 import dev.recorddisc.player.library.androidLibraryDatabase
 import dev.recorddisc.player.playback.AndroidPlayer
 import dev.recorddisc.player.playback.PlaybackWidgetProvider
@@ -27,7 +28,8 @@ class RecordDiscApplication : Application() {
         AppModel(
             androidLibraryDatabase(this),
             AndroidPlayer(this),
-            AndroidLibraryPlatform(this),
+            // The shared platform plus Convert to Audio (its converter needs the app's Media3).
+            AndroidConvertPlatform(this, AndroidLibraryPlatform(this)),
             appScope,
         )
     }

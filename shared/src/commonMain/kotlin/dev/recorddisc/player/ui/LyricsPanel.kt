@@ -51,6 +51,7 @@ import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.library.Lrc
 import dev.recorddisc.player.library.Lyrics
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.isOutside
 import dev.recorddisc.player.playback.PlaybackState
 
 /** Opens the lyrics editor for a song; provided by each layout for the panels and song ⋮ menus. */
@@ -82,7 +83,7 @@ fun LyricsPanel(model: AppModel, track: TrackEntity?, state: PlaybackState, wind
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             val label = if (lyrics?.embedded == true) "LYRICS · FROM THE SONG FILE" else "LYRICS"
             Text(label, Modifier.weight(1f), color = disc.muted, fontSize = 9.sp, letterSpacing = 0.16.em, fontWeight = FontWeight.Bold)
-            if (track != null && !lyrics?.lines.isNullOrEmpty()) LinkText("✎ Edit") { editLyrics(track) }
+            if (track != null && !track.isOutside && !lyrics?.lines.isNullOrEmpty()) LinkText("✎ Edit") { editLyrics(track) }
         }
         val lines = lyrics?.lines.orEmpty()
         when {
@@ -91,7 +92,7 @@ fun LyricsPanel(model: AppModel, track: TrackEntity?, state: PlaybackState, wind
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("No lyrics for this song yet", color = disc.muted, fontSize = 12.sp)
-                if (track != null) LinkText("Write lyrics") { editLyrics(track) }
+                if (track != null && !track.isOutside) LinkText("Write lyrics") { editLyrics(track) }
             }
             lyrics?.synced != true -> Column(
                 Modifier.fillMaxWidth().height(windowHeight).verticalScroll(rememberScrollState()).padding(vertical = 4.dp),

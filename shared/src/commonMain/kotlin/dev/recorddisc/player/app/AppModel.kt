@@ -1,6 +1,14 @@
 package dev.recorddisc.player.app
 
 import androidx.compose.ui.graphics.ImageBitmap
+import dev.recorddisc.player.convert.ConvertFormat
+import dev.recorddisc.player.convert.ConvertFormatOption
+import dev.recorddisc.player.convert.ConvertInput
+import dev.recorddisc.player.convert.ConvertJob
+import dev.recorddisc.player.convert.ConvertOptions
+import dev.recorddisc.player.convert.ConvertProgress
+import dev.recorddisc.player.convert.ConvertRules
+import dev.recorddisc.player.convert.ConvertSaved
 import dev.recorddisc.player.library.Album
 import dev.recorddisc.player.library.Artist
 import dev.recorddisc.player.library.EditSupport
@@ -29,6 +37,8 @@ import dev.recorddisc.player.library.SettingEntity
 import dev.recorddisc.player.library.TagEdit
 import dev.recorddisc.player.library.TagSaveException
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.library.TrackTags
+import dev.recorddisc.player.library.OUTSIDE_TRACK_ID
 import dev.recorddisc.player.library.groupAlbums
 import dev.recorddisc.player.library.groupArtists
 import dev.recorddisc.player.library.searchText
@@ -39,6 +49,7 @@ import dev.recorddisc.player.playback.MusicPlayer
 import dev.recorddisc.player.playback.RepeatMode
 import dev.recorddisc.player.playback.toQueueItem
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -86,6 +97,31 @@ data class PlaylistBundleExportTask(
     val progress: PlaylistBundleExportProgress? = null,
     val failure: String? = null,
 )
+
+enum class ConvertStatus { Running, Completed, Cancelled, Failed }
+
+/** A Convert to Audio job, kept beyond the dialog that started it (it waits in the Inbox). */
+data class ConvertTask(
+    val id: Long,
+    val playlistId: Long,
+    val playlistName: String,
+    val format: ConvertFormat,
+    val fileName: String,
+    /** Where it's being saved, as shown: "Music/Exports", "~/Music/Exports" or a chosen file. */
+    val destinationLabel: String,
+    val status: ConvertStatus,
+    val songs: Int,
+    val progress: ConvertProgress? = null,
+    /** The title of the song being worked on. */
+    val currentTitle: String? = null,
+    val saved: ConvertSaved? = null,
+    /** Playlist songs no longer in the library, left out. */
+    val skipped: Int = 0,
+    val failure: String? = null,
+) {
+    /** 0–100 for the Inbox and badge. */
+    val percent: Int get() = if (status == ConvertStatus.Completed) 100 else ((progress?.fraction ?: 0f) * 100).toInt().coerceIn(0, 100)
+}
 
 /** What each platform provides to the shared app. */
 interface LibraryPlatform {
@@ -160,7 +196,38 @@ interface LibraryPlatform {
      * [TagSaveException] with a message for the user if it can't.
      */
     suspend fun saveLyrics(track: TrackEntity, text: String?): String? = throw UnsupportedOperationException("Editing isn't available here")
+    /** Tags of any audio file the app can read, such as one opened from a file manager. */
+    suspend fun readFileTags(location: String): TrackTags = TrackTags()
+    /** Convert to Audio: the formats this device offers (empty where conversion isn't available). */
+    fun convertFormats(): List<ConvertFormatOption> = emptyList()
+    /** Where files go by default ("Music/Exports"); null where the user must choose (Android 8–9). */
+    val convertDefaultFolder: String? get() = null
+    /**
+     * Makes [job]'s file, reporting [onProgress]; cancelled through the coroutine (the partial file
+     * is removed). Throws with a message for the user if it can't.
+     */
+    suspend fun convertPlaylist(job: ConvertJob, onProgress: (ConvertProgress) -> Unit): ConvertSaved =
+        throw UnsupportedOperationException("Converting isn't available here")
 }
+
+/**
+ * An audio file handed to the app by a file manager ("Open with"). [location] is a path on desktop
+ * and a content URI on Android; [sizeBytes] is null when the file manager doesn't say.
+ */
+data class OpenedFile(val location: String, val fileName: String, val sizeBytes: Long?)
+
+/** What opening a file did: played a library song, or played a file that isn't in the library. */
+enum class OpenedAs { LibrarySong, OutsideFile }
+
+/**
+ * The library song [file] is, if any. The same path is a match. Otherwise the same file name and
+ * size: Android file managers hand over their own address for a file, not the one the library has.
+ */
+fun findLibraryMatch(file: OpenedFile, library: List<TrackEntity>): TrackEntity? =
+    library.firstOrNull { it.location == file.location }
+        ?: file.sizeBytes?.takeIf { it > 0 }?.let { size ->
+            library.filter { it.sizeBytes == size && it.fileName.equals(file.fileName, ignoreCase = true) }.singleOrNull()
+        }
 
 sealed interface ScanState {
     data object Idle : ScanState
@@ -296,6 +363,80 @@ class AppModel(
         playlistBundleExportJob?.cancel()
     }
 
+    private val _convertTask = MutableStateFlow<ConvertTask?>(null)
+    /** The latest Convert to Audio job (running, or finished and not yet dismissed from the Inbox). */
+    val convertTask: StateFlow<ConvertTask?> = _convertTask.asStateFlow()
+    private var convertJob: Job? = null
+    private var nextConvertId = 0L
+
+    /** Formats this device can write, for the Convert to Audio dialog. */
+    fun convertFormats(): List<ConvertFormatOption> = runCatching { platform.convertFormats() }.getOrDefault(emptyList())
+
+    /** The default save folder as shown, or null where the user has to choose one. */
+    val convertDefaultFolder: String? get() = platform.convertDefaultFolder
+
+    /**
+     * Starts converting a playlist into one file. One job runs at a time: returns a message when
+     * it can't start (another is running, or no songs are left), else null.
+     */
+    fun startConversion(playlistId: Long, playlistName: String, options: ConvertOptions): String? {
+        if (convertJob?.isActive == true) return "Another conversion is already running"
+        val id = ++nextConvertId
+        val fileName = ConvertRules.withExtension(options.fileName, options.format)
+        val label = if (options.destination != null) options.destinationLabel ?: fileName else platform.convertDefaultFolder ?: "the chosen folder"
+        // Shown as running straight away, so the progress popup and Inbox never show an older job.
+        _convertTask.value = ConvertTask(id, playlistId, playlistName, options.format, fileName, label, ConvertStatus.Running, songs = 0)
+        convertJob = scope.launch {
+            try {
+                val playlist = playlistsDao.get(playlistId) ?: error("Playlist not found")
+                val byId = tracksDao.observeAll().first().associateBy { it.id }
+                val items = playlistsDao.itemsFor(playlistId).sortedBy { it.position }
+                val songs = items.mapNotNull { byId[it.trackId] }
+                check(songs.isNotEmpty()) { "This playlist has no available songs" }
+                _convertTask.value = _convertTask.value?.takeIf { it.id == id }?.copy(
+                    playlistName = playlist.name, songs = songs.size, skipped = items.size - songs.size, currentTitle = songs.first().displayTitle,
+                )
+                val job = ConvertJob(
+                    inputs = songs.map { ConvertInput(it.location, it.displayTitle) },
+                    format = options.format,
+                    gapSeconds = options.gapSeconds.coerceAtLeast(0),
+                    evenOutVolume = options.evenOutVolume,
+                    title = playlist.name,
+                    fileName = fileName,
+                    destination = options.destination,
+                    bytesNeeded = ConvertRules.bytesNeeded(options.format, ConvertRules.totalMs(songs.map { it.durationMs }, options.gapSeconds)),
+                )
+                val saved = platform.convertPlaylist(job) { progress ->
+                    val current = _convertTask.value
+                    if (current?.id == id && current.status == ConvertStatus.Running) {
+                        _convertTask.value = current.copy(progress = progress, currentTitle = songs.getOrNull(progress.song)?.displayTitle)
+                    }
+                }
+                _convertTask.value = _convertTask.value?.takeIf { it.id == id }?.copy(status = ConvertStatus.Completed, saved = saved)
+            } catch (cancelled: CancellationException) {
+                _convertTask.value = _convertTask.value?.takeIf { it.id == id }?.copy(status = ConvertStatus.Cancelled)
+                throw cancelled
+            } catch (failure: Exception) {
+                val text = failure.message ?: "The conversion failed"
+                _convertTask.value = _convertTask.value?.takeIf { it.id == id }?.copy(status = ConvertStatus.Failed, failure = text)
+                message("Couldn't convert ${_convertTask.value?.playlistName ?: playlistName}")
+            } finally {
+                convertJob = null
+            }
+        }
+        return null
+    }
+
+    /** Stops the running conversion; its partial file is removed. */
+    fun cancelConversion() {
+        convertJob?.cancel()
+    }
+
+    /** Clears a finished, failed or cancelled job from the Inbox. */
+    fun dismissConversion() {
+        if (_convertTask.value?.status != ConvertStatus.Running) _convertTask.value = null
+    }
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     /** Short notices for a toast or snackbar. */
     val messages: SharedFlow<String> = _messages.asSharedFlow()
@@ -309,6 +450,40 @@ class AppModel(
     private val _accessRevision = MutableStateFlow(0)
     /** Goes up when folder access changes (Android: write access granted), so the editor checks again. */
     val accessRevision: StateFlow<Int> = _accessRevision.asStateFlow()
+
+    /** Done once the startup queue (restored or the library) is set, so an opened file isn't replaced by it. */
+    private val startupQueueSet = CompletableDeferred<Unit>()
+
+    private val _outsideTrack = MutableStateFlow<TrackEntity?>(null)
+
+    /** The file opened from a file manager that isn't in the library, while it's in the queue. */
+    val outsideTrack: StateFlow<TrackEntity?> = _outsideTrack.asStateFlow()
+
+    /**
+     * Plays a file handed over by a file manager ("Open with"). A library song plays as if chosen
+     * in Library (the library is the queue). Any other file plays on its own; it isn't added to the
+     * library or saved for Resume on start.
+     */
+    suspend fun openFile(file: OpenedFile): OpenedAs {
+        startupQueueSet.await()
+        val library = tracksDao.observeAll().first()
+        val match = findLibraryMatch(file, library)
+        if (match != null) {
+            loadQueue(library, play = true, library.indexOfFirst { it.id == match.id })
+            return OpenedAs.LibrarySong
+        }
+        val tags = try {
+            platform.readFileTags(file.location)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        val track = trackEntity(OUTSIDE_TRACK_ID, FileEntry(file.location, file.fileName, file.sizeBytes ?: 0, 0), tags)
+        _outsideTrack.value = track
+        loadQueue(listOf(track), play = true)
+        return OpenedAs.OutsideFile
+    }
 
     private var quietScan: Job? = null
     private val folderChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -326,8 +501,10 @@ class AppModel(
                 // changes made since last time.
                 val library = tracksDao.observeAll().first()
                 if (!(s.resumeOnStart && restoreQueue(library))) loadQueue(library, play = false)
+                startupQueueSet.complete(Unit)
                 rescan(folder)
             }
+            startupQueueSet.complete(Unit)
             rememberQueue()
             _initialized.value = true
         }
@@ -441,13 +618,20 @@ class AppModel(
 
     /** Saves the queue (in play order), the current song and its position for Resume on start. */
     private fun rememberQueue() {
+        // A file opened from a file manager isn't saved: the app can't open it again after a restart,
+        // so the queue saved before it comes back instead. It's forgotten once something else plays.
         scope.launch {
-            player.state.map { s -> s.queue.joinToString(",") { it.id.toString() } }.distinctUntilChanged()
+            player.state.map { s -> s.queue.any { it.id == OUTSIDE_TRACK_ID } }.distinctUntilChanged()
+                .collect { outside -> if (!outside) _outsideTrack.value = null }
+        }
+        scope.launch {
+            player.state.filter { s -> s.queue.none { it.id == OUTSIDE_TRACK_ID } }
+                .map { s -> s.queue.joinToString(",") { it.id.toString() } }.distinctUntilChanged()
                 .collect { ids -> if (ids.isNotEmpty()) put(RESUME_QUEUE, ids) }
         }
         scope.launch {
             // While playing, the position is saved every few seconds; when paused or seeking, exactly.
-            player.state.filter { it.current != null }
+            player.state.filter { it.current != null && it.queue.none { item -> item.id == OUTSIDE_TRACK_ID } }
                 .map { s -> Triple(s.index, s.isPlaying, if (s.isPlaying) s.positionMs / SAVE_POSITION_EVERY_MS else s.positionMs) }
                 .distinctUntilChanged()
                 .collect { (index, _, _) ->

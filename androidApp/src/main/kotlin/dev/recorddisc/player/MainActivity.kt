@@ -2,16 +2,24 @@ package dev.recorddisc.player
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import dev.recorddisc.player.app.OpenedAs
+import dev.recorddisc.player.app.OpenedFile
+import androidx.activity.result.contract.ActivityResultContract
+import dev.recorddisc.player.convert.AndroidConvertPlatform
+import dev.recorddisc.player.convert.ConvertService
+import dev.recorddisc.player.ui.ChosenFile
 import dev.recorddisc.player.export.PlaylistExportService
 import dev.recorddisc.player.library.TagRules
 import dev.recorddisc.player.ui.EditorActions
@@ -19,7 +27,9 @@ import dev.recorddisc.player.ui.PlaylistCoverFile
 import dev.recorddisc.player.ui.PlaylistFileActions
 import dev.recorddisc.player.ui.PhoneApp
 import dev.recorddisc.player.ui.PhoneScreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.receiveAsFlow
 
 class MainActivity : ComponentActivity() {
@@ -27,6 +37,9 @@ class MainActivity : ComponentActivity() {
 
     /** Screens to open, e.g. Now Playing when the notification is tapped; each is handled once. */
     private val openRequests = Channel<PhoneScreen>(Channel.CONFLATED)
+
+    /** Files opened from a file manager ("Open with"), sent once each is playing. */
+    private val openedFiles = Channel<OpenedAs>(Channel.CONFLATED)
     private var notificationPermissionDone: ((Boolean) -> Unit)? = null
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val done = notificationPermissionDone
@@ -119,6 +132,18 @@ class MainActivity : ComponentActivity() {
         done?.invoke(uri?.toString())
     }
 
+    /** Convert to Audio → Change: the system file picker, creating a file of the format's type. */
+    private var convertDestinationPicked: ((ChosenFile?) -> Unit)? = null
+    private val chooseConvertFile = registerForActivityResult(object : ActivityResultContract<Pair<String, String>, Uri?>() {
+        override fun createIntent(context: Context, input: Pair<String, String>) = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE).setType(input.second).putExtra(Intent.EXTRA_TITLE, input.first)
+        override fun parseResult(resultCode: Int, intent: Intent?): Uri? = intent?.data?.takeIf { resultCode == RESULT_OK }
+    }) { uri: Uri? ->
+        val done = convertDestinationPicked
+        convertDestinationPicked = null
+        done?.invoke(uri?.let { ChosenFile(it.toString(), displayName(it) ?: "the chosen file") })
+    }
+
     private val playlistFiles = PlaylistFileActions(
         saveM3u = { name, done -> m3uExportPicked = done; saveM3u.launch(name) },
         saveBundle = { name, done -> bundleExportPicked = done; saveBundle.launch(name) },
@@ -138,6 +163,22 @@ class MainActivity : ComponentActivity() {
                     notificationPermissionDone = done
                     requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
+            }
+        },
+        chooseConvertDestination = { name, format, done ->
+            convertDestinationPicked = done
+            chooseConvertFile.launch(name to AndroidConvertPlatform.mimeType(format))
+        },
+        startBackgroundConversion = { playlistId, playlistName, options ->
+            // The progress notification needs permission on Android 13+; converting works without it.
+            askForNotifications()
+            val serviceIntent = Intent(this, ConvertService::class.java).setAction(ConvertService.ACTION_START)
+            try {
+                startForegroundService(serviceIntent)
+                model.startConversion(playlistId, playlistName, options)?.also { stopService(serviceIntent) }
+            } catch (failure: Exception) {
+                stopService(serviceIntent)
+                "Couldn't start the conversion: ${failure.message ?: "Android rejected the background task"}"
             }
         },
         startBackgroundBundleExport = { playlistId, playlistName, destination, includeLyrics ->
@@ -186,6 +227,7 @@ class MainActivity : ComponentActivity() {
                 model,
                 onChooseFolder = { pickFolder.launch(null) },
                 openRequests = openRequests.receiveAsFlow(),
+                openedFiles = openedFiles.receiveAsFlow(),
                 editor = editor,
                 playlistActions = playlistFiles,
             )
@@ -200,9 +242,33 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleOpen(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) intent.data?.let { openFile(it) }
         when (intent?.getStringExtra(EXTRA_OPEN)) {
             OPEN_NOW_PLAYING -> openRequests.trySend(PhoneScreen.NowPlaying)
             OPEN_INBOX -> openRequests.trySend(PhoneScreen.Inbox)
+        }
+    }
+
+    /**
+     * "Open with" from a file manager. The file manager grants read access to this one file for
+     * as long as the app is open; its name and size find it in the library if it's there.
+     */
+    private fun openFile(uri: Uri) {
+        val (name, size) = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (!c.moveToFirst()) null
+                else c.getString(0) to (if (c.isNull(1)) null else c.getLong(1))
+            }
+        }.getOrNull() ?: (null to null)
+        val file = OpenedFile(uri.toString(), name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Audio file", size)
+        (application as RecordDiscApplication).appScope.launch {
+            try {
+                openedFiles.trySend(model.openFile(file))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                model.message("Couldn't open ${file.fileName}")
+            }
         }
     }
 
@@ -217,6 +283,21 @@ class MainActivity : ComponentActivity() {
             }
             out.toByteArray().takeIf { it.size <= TagRules.MAX_COVER_BYTES }
         }
+    }.getOrNull()
+
+    /** Asks once (Android 13+) for notifications, used for background task progress. */
+    private fun askForNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+        if (prefs.getBoolean(NOTIFICATION_PERMISSION_ASKED, false)) return
+        prefs.edit().putBoolean(NOTIFICATION_PERMISSION_ASKED, true).apply()
+        notificationPermissionDone = {}
+        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun displayName(uri: Uri): String? = runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
     }.getOrNull()
 
     private fun coverName(uri: Uri): String {

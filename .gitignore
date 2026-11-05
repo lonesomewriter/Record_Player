@@ -27,6 +27,9 @@ captures
 *.jks
 *.keystore
 keystore.properties
+*.p12
+*.pfx
+*.key
 *.pem
 
 # ide

@@ -72,6 +72,8 @@ import dev.recorddisc.player.app.PlaylistBundleExportStage
 import dev.recorddisc.player.app.PlaylistBundleExportStatus
 import dev.recorddisc.player.app.PlaylistBundleExportTask
 import dev.recorddisc.player.library.M3uImportPreview
+import dev.recorddisc.player.convert.ConvertFormat
+import dev.recorddisc.player.convert.ConvertOptions
 import dev.recorddisc.player.library.M3uPathMode
 import dev.recorddisc.player.library.PlaylistBundlePreview
 import dev.recorddisc.player.library.PlaylistView
@@ -96,6 +98,16 @@ data class PlaylistFileActions(
     val chooseCover: ((PlaylistCoverFile?) -> Unit) -> Unit = { done -> done(null) },
     val requestExportNotificationPermission: ((Boolean) -> Unit) -> Unit = { done -> done(false) },
     val startBackgroundBundleExport: ((Long, String, String, Boolean) -> String?)? = null,
+    /**
+     * Convert to Audio → Change / Choose…: asks where to save (suggested file name, format) and
+     * calls back with the chosen file, or null when cancelled.
+     */
+    val chooseConvertDestination: (String, ConvertFormat, (ChosenFile?) -> Unit) -> Unit = { _, _, done -> done(null) },
+    /**
+     * Android: starts Convert to Audio together with its background service (notification, Cancel).
+     * Returns a message when it can't start. Null on desktop, where the model is called directly.
+     */
+    val startBackgroundConversion: ((playlistId: Long, playlistName: String, options: ConvertOptions) -> String?)? = null,
 )
 
 val LocalAddToPlaylist = staticCompositionLocalOf<(TrackEntity) -> Unit> {
@@ -136,6 +148,7 @@ fun PhonePlaylists(
 @Composable
 fun PhoneInbox(model: AppModel, onBack: () -> Unit, onOpenProgress: () -> Unit, onCancelExport: () -> Unit) {
     val task by model.playlistBundleExportTask.collectAsState()
+    val convert by model.convertTask.collectAsState()
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 22.dp)) {
         Row(Modifier.fillMaxWidth().padding(bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             CircleIconButton("←", "Back to disc", onBack)
@@ -144,8 +157,9 @@ fun PhoneInbox(model: AppModel, onBack: () -> Unit, onOpenProgress: () -> Unit, 
                 Text("Inbox", Modifier.padding(top = 3.dp), color = disc.text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             }
         }
+        ConvertInboxSection(model, showInFolder = false, modifier = Modifier.padding(bottom = 12.dp))
         if (task == null) {
-            Text("No tasks yet", color = disc.muted, fontSize = 14.sp)
+            if (convert == null) Text("No tasks yet", color = disc.muted, fontSize = 14.sp)
         } else {
             val current = requireNotNull(task)
             Column(
@@ -273,6 +287,7 @@ private fun PlaylistScreen(
     var pageId by remember { mutableStateOf<Long?>(selectedId) }
     var nameDialog by remember { mutableStateOf<NameDialog?>(null) }
     var exportFor by remember { mutableStateOf<PlaylistView?>(null) }
+    var convertFor by remember { mutableStateOf<PlaylistView?>(null) }
     var importChoice by remember { mutableStateOf(false) }
     var review by remember { mutableStateOf<ImportReview?>(null) }
     var pageMenu by remember { mutableStateOf(false) }
@@ -370,7 +385,7 @@ private fun PlaylistScreen(
                 onPlay = { action { model.playPlaylist(current.id) }; onPlayed(current.id) },
                 onShufflePlay = { action { model.playPlaylist(current.id, shuffle = true) }; onPlayed(current.id) },
                 onExport = { exportFor = current },
-                onSoon = { model.message("To audio file is coming later") },
+                onConvert = { convertFor = current },
                 onRemove = { track -> action { model.removeFromPlaylist(current.id, track.id) } },
                 onMoveTo = { track, to -> action { model.movePlaylistTrackTo(current.id, track.id, to) } },
                 onPlaySong = { songs, index -> model.playPlaylistSong(songs, index); onPlayed(current.id) },
@@ -411,6 +426,9 @@ private fun PlaylistScreen(
     }
     exportFor?.let { playlist ->
         ExportDialog(model, playlist, actions, desktop, onDismiss = { exportFor = null }, onError = ::fail)
+    }
+    convertFor?.let { playlist ->
+        ConvertDialog(model, playlist, actions, desktop, onDismiss = { convertFor = null })
     }
     if (importChoice) {
         AlertDialog(
@@ -562,7 +580,7 @@ private fun PlaylistDetail(
     onPlay: () -> Unit,
     onShufflePlay: () -> Unit,
     onExport: () -> Unit,
-    onSoon: () -> Unit,
+    onConvert: () -> Unit,
     onRemove: (TrackEntity) -> Unit,
     onMoveTo: (TrackEntity, Int) -> Unit,
     onPlaySong: (List<TrackEntity>, Int) -> Unit,
@@ -590,8 +608,7 @@ private fun PlaylistDetail(
                 ActionPill("▶", "Play", onClick = onPlay, enabled = playlist.songs.isNotEmpty(), primary = true)
                 ActionPill("⇄", "Shuffle Play", onClick = onShufflePlay, enabled = playlist.songs.isNotEmpty())
                 ActionPill("⇧", "Export", onClick = onExport)
-                ActionPill("♫", "To audio file", onClick = onSoon, enabled = false)
-                SoonTag()
+                ActionPill("♫", "Convert to Audio", onClick = onConvert, enabled = playlist.songs.isNotEmpty())
             }
             if (playlist.songs.isEmpty()) {
                 Text(

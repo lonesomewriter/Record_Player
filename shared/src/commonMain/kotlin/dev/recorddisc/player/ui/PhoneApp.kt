@@ -60,6 +60,8 @@ import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.app.ScanState
 import dev.recorddisc.player.app.rememberArtwork
 import dev.recorddisc.player.library.TrackEntity
+import dev.recorddisc.player.app.OpenedAs
+import dev.recorddisc.player.library.isOutside
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.RepeatMode
 import kotlinx.coroutines.flow.Flow
@@ -111,6 +113,8 @@ fun PhoneApp(
     model: AppModel,
     onChooseFolder: () -> Unit,
     openRequests: Flow<PhoneScreen> = emptyFlow(),
+    /** Files opened from a file manager ("Open with"), once each has started playing. */
+    openedFiles: Flow<OpenedAs> = emptyFlow(),
     editor: EditorActions = EditorActions(),
     playlistActions: PlaylistFileActions = PlaylistFileActions(),
 ) {
@@ -148,7 +152,7 @@ fun PhoneApp(
             if (!settings.setupDone) {
                 PhoneWelcome(scan, spin, model.platform::folderLabel, onChooseFolder, model::cancelScan) { model.finishSetup() }
             } else {
-                PhoneScreens(model, state, spin, openRequests, onChooseFolder, editor, playlistActions)
+                PhoneScreens(model, state, spin, openRequests, openedFiles, onChooseFolder, editor, playlistActions)
             }
             MessageToast(toastMessages, Modifier.align(Alignment.BottomCenter).padding(bottom = 84.dp))
         }
@@ -161,6 +165,7 @@ private fun BoxScope.PhoneScreens(
     state: PlaybackState,
     spin: DiscSpin,
     openRequests: Flow<PhoneScreen>,
+    openedFiles: Flow<OpenedAs>,
     onChooseFolder: () -> Unit,
     editor: EditorActions,
     playlistActions: PlaylistFileActions,
@@ -232,6 +237,14 @@ private fun BoxScope.PhoneScreens(
                 PhoneScreen.Inbox -> { inboxReturn = PhoneScreen.Home; go(PhoneScreen.Inbox) }
                 else -> enterFresh(it)
             }
+        }
+    }
+    // A file opened from a file manager shows on Now Playing. A library song counts as chosen in
+    // Library; leaving Now Playing for any other file goes Home.
+    LaunchedEffect(openedFiles) {
+        openedFiles.collect { opened ->
+            playSource = if (opened == OpenedAs.LibrarySong) PlaySource.Library else null
+            go(PhoneScreen.NowPlaying)
         }
     }
     LaunchedEffect(exportTask?.id) {
@@ -490,7 +503,9 @@ private fun NowPlaying(
         }
         Text(current?.title ?: "Nothing playing", color = disc.text, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.025).em, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(current?.artist ?: "Unknown artist", Modifier.padding(top = 5.dp).alpha(0.85f), color = disc.text, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(listOfNotNull(current?.album, track?.year?.toString()).joinToString(" · "), Modifier.padding(top = 3.dp), color = disc.muted, fontSize = 12.sp, maxLines = 1)
+        val albumLine = listOfNotNull(current?.album, track?.year?.toString()).joinToString(" · ")
+        if (albumLine.isNotEmpty()) Text(albumLine, Modifier.padding(top = 3.dp), color = disc.muted, fontSize = 12.sp, maxLines = 1)
+        if (track?.isOutside == true) OutsideFileLabel(Modifier.padding(top = 8.dp))
         SeekRow(model, state, Modifier.padding(top = 20.dp, bottom = 4.dp), textSize = 11)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             CtrlButton(DiscIcons.Shuffle, if (state.shuffle) "Shuffle on" else "Shuffle off", 44.dp, 22.dp, { model.setShuffle(!state.shuffle) }, active = state.shuffle)
@@ -513,11 +528,28 @@ private fun NowPlaying(
     }
 }
 
-/** The library by ID, for details the queue doesn't carry (year, genre, format). */
+/**
+ * The library by ID, for details the queue doesn't carry (year, genre, format). A file opened from
+ * a file manager that isn't in the library is included while it's in the queue.
+ */
 @Composable
 fun rememberTrackIndex(model: AppModel): Map<Long, dev.recorddisc.player.library.TrackEntity> {
     val tracks by model.tracks.collectAsState()
-    return remember(tracks) { tracks.associateBy { it.id } }
+    val outside by model.outsideTrack.collectAsState()
+    return remember(tracks, outside) { tracks.associateBy { it.id } + listOfNotNull(outside).associateBy { it.id } }
+}
+
+/** The "Opened from Files · not in your library" pill under a file that isn't in the library. */
+@Composable
+fun OutsideFileLabel(modifier: Modifier = Modifier) {
+    Row(
+        modifier.clip(RoundedCornerShape(50)).background(disc.tint.copy(alpha = 0.07f)).border(1.dp, disc.line, RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(DiscIcons.Folder, null, Modifier.size(13.dp), tint = disc.accentReadable)
+        Text(OUTSIDE_FILE_LABEL, color = disc.accentReadable, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 /** Elapsed time, the seek bar and the length. */

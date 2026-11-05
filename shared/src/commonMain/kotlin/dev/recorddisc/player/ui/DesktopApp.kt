@@ -32,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import dev.recorddisc.player.app.AppModel
 import dev.recorddisc.player.app.ScanState
 import dev.recorddisc.player.app.rememberArtwork
+import dev.recorddisc.player.library.isOutside
 import dev.recorddisc.player.playback.PlaybackState
 import dev.recorddisc.player.playback.RepeatMode
 
@@ -59,6 +61,8 @@ enum class DesktopView(val title: String, val icon: ImageVector) {
     Home("Home", DiscIcons.Home),
     Library("Library", DiscIcons.Library),
     Playlists("Playlists", DiscIcons.Playlist),
+    /** Background tasks (2026-11-04): Convert to Audio waits here when its progress popup is closed. */
+    Inbox("Inbox", DiscIcons.Inbox),
     Settings("Settings", DiscIcons.Settings),
 }
 
@@ -87,6 +91,8 @@ fun DesktopApp(
     startLyricsEditor: Boolean = false,
     startPlaylistId: Long? = null,
     systemAccent: kotlinx.coroutines.flow.StateFlow<SystemAccent?>? = null,
+    /** Files opened from a file manager ("Open with"), once each has started playing. */
+    openedFiles: kotlinx.coroutines.flow.Flow<dev.recorddisc.player.app.OpenedAs> = kotlinx.coroutines.flow.emptyFlow(),
 ) {
     val settings = model.settings.collectAsState().value
     // Settings → Use system accent: follow the desktop's accent while it shares one.
@@ -128,6 +134,8 @@ fun DesktopApp(
                 val viewDetails: (dev.recorddisc.player.library.TrackEntity) -> Unit = { t ->
                     if (t.id == state.current?.id) { detailsId = null; view = DesktopView.Home } else detailsId = t.id
                 }
+                // A file opened from a file manager shows on Home (desktop's Now Playing).
+                LaunchedEffect(openedFiles) { openedFiles.collect { detailsId = null; view = DesktopView.Home } }
                 val main = MainContext(
                     narrow = narrow,
                     startLibrary = startLibrary,
@@ -156,7 +164,7 @@ fun DesktopApp(
                 androidx.compose.runtime.CompositionLocalProvider(LocalViewDetails provides viewDetails) {
                 if (narrow) {
                     Column(Modifier.fillMaxSize()) {
-                        TopNav(view, showView)
+                        TopNav(model, view, showView)
                         Box(Modifier.weight(1f).fillMaxWidth().background(disc.panel)) { mainArea() }
                         Dock(model, state, narrow = true, queueOpen = false, onToggleQueue = null) { showView(DesktopView.Home) }
                     }
@@ -217,7 +225,8 @@ private fun Sidebar(
             .padding(start = 14.dp, end = 14.dp, top = 22.dp, bottom = 16.dp),
     ) {
         BrandRow(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 26.dp))
-        for (v in DesktopView.entries) NavItem(v, v == view) { onSelect(v) }
+        val badge = inboxBadge(model)
+        for (v in DesktopView.entries) NavItem(v, v == view, badge = badge.takeIf { v == DesktopView.Inbox }) { onSelect(v) }
         Text("YOUR PLAYLISTS", Modifier.padding(start = 8.dp, top = 28.dp, bottom = 8.dp), color = disc.muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.17.em)
         if (playlists.isEmpty()) {
             Text("No playlists yet", Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = disc.muted, fontSize = 11.sp)
@@ -249,8 +258,15 @@ private fun Sidebar(
     }
 }
 
+/** The Inbox's badge: the running conversion's %, or null. */
 @Composable
-private fun NavItem(v: DesktopView, selected: Boolean, compact: Boolean = false, onClick: () -> Unit) {
+private fun inboxBadge(model: AppModel): String? {
+    val task by model.convertTask.collectAsState()
+    return task?.takeIf { it.status == dev.recorddisc.player.app.ConvertStatus.Running }?.let { "${it.percent}%" }
+}
+
+@Composable
+private fun NavItem(v: DesktopView, selected: Boolean, compact: Boolean = false, badge: String? = null, onClick: () -> Unit) {
     Row(
         Modifier.then(if (compact) Modifier else Modifier.fillMaxWidth()).padding(vertical = 1.5.dp).clip(RoundedCornerShape(11.dp))
             .background(if (selected) disc.soft else Color.Transparent).clickable(onClick = onClick)
@@ -262,21 +278,27 @@ private fun NavItem(v: DesktopView, selected: Boolean, compact: Boolean = false,
             v.title, Modifier.then(if (compact) Modifier else Modifier.weight(1f)), color = if (selected) disc.text else disc.muted,
             fontSize = if (compact) 12.sp else 13.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         )
-        if (!compact) {
+        if (badge != null) {
+            Text(
+                badge, Modifier.clip(RoundedCornerShape(50)).background(disc.soft).padding(horizontal = 7.dp, vertical = 2.dp),
+                color = disc.accentReadable, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+            )
+        } else if (!compact) {
             Box(Modifier.size(6.dp).alpha(if (selected) 1f else 0.28f).clip(CircleShape).background(disc.accentReadable))
         }
     }
 }
 
 @Composable
-private fun TopNav(view: DesktopView, onSelect: (DesktopView) -> Unit) {
+private fun TopNav(model: AppModel, view: DesktopView, onSelect: (DesktopView) -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(disc.sideTop).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         BrandRow(showSub = false)
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            for (v in DesktopView.entries) NavItem(v, v == view, compact = true) { onSelect(v) }
+            val badge = inboxBadge(model)
+            for (v in DesktopView.entries) NavItem(v, v == view, compact = true, badge = badge.takeIf { v == DesktopView.Inbox }) { onSelect(v) }
         }
     }
 }
@@ -311,8 +333,20 @@ private fun MainView(model: AppModel, state: PlaybackState, spin: DiscSpin, view
             DesktopView.Home -> HomeView(model, state, spin, narrow)
             DesktopView.Library -> Unit
             DesktopView.Playlists -> Unit
+            DesktopView.Inbox -> DesktopInbox(model)
             DesktopView.Settings -> DesktopSettings(model, narrow, main.appVersion, main.chooseFolder, main.onCustomAccent)
         }
+    }
+}
+
+/** Background tasks: Convert to Audio stays here while it runs if its progress popup is closed. */
+@Composable
+private fun DesktopInbox(model: AppModel) {
+    val task by model.convertTask.collectAsState()
+    Column(Modifier.widthIn(max = 640.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Tasks stay here while they run if you close their progress window.", color = disc.muted, fontSize = 12.sp)
+        ConvertInboxSection(model, showInFolder = true)
+        if (task == null) Text("No background tasks yet.", color = disc.muted, fontSize = 13.sp)
     }
 }
 
@@ -374,6 +408,7 @@ private fun ViewHeader(model: AppModel, view: DesktopView) {
                         DesktopView.Home -> "Now spinning"
                         DesktopView.Library -> "Collection"
                         DesktopView.Playlists -> "Your mixes"
+                        DesktopView.Inbox -> "Background tasks"
                         DesktopView.Settings -> "Preferences"
                     },
                 )
@@ -431,11 +466,13 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
                 fontWeight = FontWeight.Bold, letterSpacing = (-0.045).em, textAlign = textAlign, maxLines = 3, overflow = TextOverflow.Ellipsis,
             )
             Text(current?.artist ?: "Unknown artist", Modifier.padding(top = 9.dp), color = disc.text.copy(alpha = 0.88f), fontSize = 15.sp)
-            Text(listOfNotNull(current?.album, track?.year?.toString()).joinToString("  ·  "), Modifier.padding(top = 5.dp), color = disc.muted, fontSize = 12.sp)
+            val albumLine = listOfNotNull(current?.album, track?.year?.toString()).joinToString("  ·  ")
+            if (albumLine.isNotEmpty()) Text(albumLine, Modifier.padding(top = 5.dp), color = disc.muted, fontSize = 12.sp)
+            val outside = track?.isOutside == true
             FlowRow(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 track?.genre?.let { Chip(it, accent = true) }
-                track?.format?.let { Chip(it.uppercase()) }
-                Chip("Local file")
+                track?.format?.takeIf { it.isNotEmpty() }?.let { Chip(it.uppercase()) }
+                if (outside) OutsideFileLabel() else Chip("Local file")
             }
             FlowRow(Modifier.padding(top = 28.dp), horizontalArrangement = Arrangement.spacedBy(9.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(
@@ -446,9 +483,12 @@ private fun HomeView(model: AppModel, state: PlaybackState, spin: DiscSpin, narr
                     Text(if (state.isPlaying) "Pause" else "Play", color = disc.accentInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
                 val editSong = LocalEditSong.current
-                ActionButton(DiscIcons.Edit, "Edit metadata", enabled = track != null) { track?.let(editSong) }
+                ActionButton(DiscIcons.Edit, "Edit metadata", enabled = track != null && !outside) { track?.let(editSong) }
                 val showLyrics = model.settings.collectAsState().value?.showLyrics == true
                 ActionButton(DiscIcons.Lyrics, "Lyrics", enabled = true, active = showLyrics) { model.setShowLyrics(!showLyrics) }
+            }
+            if (outside) {
+                Text(OUTSIDE_FILE_NOTE, Modifier.padding(top = 18.dp).widthIn(max = 460.dp), color = disc.muted, fontSize = 11.sp, lineHeight = 16.sp, textAlign = textAlign)
             }
             Text("CLICK THE DISC TO PLAY OR PAUSE", Modifier.padding(top = 18.dp), color = disc.muted, fontSize = 10.sp, letterSpacing = 0.08.em)
             if (model.settings.collectAsState().value?.showLyrics == true) {
@@ -556,7 +596,7 @@ private fun QueuePanel(model: AppModel, state: PlaybackState) {
             DetailRow("Album", track?.album)
             DetailRow("Year", track?.year?.toString())
             DetailRow("Genre", track?.genre)
-            DetailRow("Source", "Local file")
+            DetailRow("Source", if (track?.isOutside == true) "Opened from Files" else "Local file")
         }
     }
 }
