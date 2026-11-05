@@ -1,0 +1,19 @@
+<p>Record Player is an offline music player for the music you already have. Choose your music folder and your songs play on a spinning record.</p>
+
+<p><b>Features</b></p>
+<ul>
+<li><b>Your music, from your folder:</b> plays MP3, FLAC, M4A, OGG, Opus and WAV, and picks up new and changed songs.</li>
+<li><b>Now Playing on a spinning record</b>, with shuffle, repeat and gapless playback.</li>
+<li><b>Synced lyrics</b> from .lrc files or the song itself, with a built-in lyrics editor.</li>
+<li><b>Edit song details:</b> title, artist, album, cover art and more.</li>
+<li><b>Playlists</b> with drag-to-reorder and custom covers. Export and import as M3U8, or as a .rdplaylist bundle with the songs, lyrics and cover in one file.</li>
+<li><b>Convert to Audio:</b> turn a playlist into one audio file (FLAC, M4A, Opus or WAV) on your phone, with optional even volume and song markers you can skip between. It keeps working in the background, with progress in the Inbox.</li>
+<li><b>Open with:</b> play audio files straight from your file manager.</li>
+<li><b>Make it yours:</b> light, dark or system theme, accent colours, and pause when the phone is muted.</li>
+<li><b>Controls everywhere:</b> lock screen, notification and home-screen widget.</li>
+</ul>
+
+<p><b>Privacy</b></p>
+<p>No accounts, no ads, no analytics and no internet access. The app doesn't even ask for internet permission. Everything stays on your device.</p>
+
+<p>Record Player is free software under the GNU GPL, version 3 or later. A Linux desktop version is also available from the project's source code.</p>

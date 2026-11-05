@@ -1,0 +1,1 @@
+Offline music player that spins your own songs on a record. No ads or tracking.

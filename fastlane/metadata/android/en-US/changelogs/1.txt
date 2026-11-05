@@ -1,0 +1,7 @@
+First release.
+
+- Plays the music in your chosen folder on a spinning record, with synced lyrics and song details editing.
+- Playlists with export and import (M3U8, .rdplaylist).
+- Convert a playlist into one audio file.
+- Open audio files from your file manager.
+- No ads, no tracking, no internet access.
