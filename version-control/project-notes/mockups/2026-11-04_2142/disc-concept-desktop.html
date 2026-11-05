@@ -1,0 +1,3450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Record Player — Desktop Variant</title>
+<style>
+:root{
+  --bg:#0b0908;--shell:#12100d;--panel:#17130f;--panel2:#1d1712;--panel3:#241c16;
+  --text:#f3ebe0;--muted:#a39380;--accent:#e0a458;--accent-rgb:224,164,88;
+  --accent-ink:#20140a;--accent-readable:#e0a458;--soft:rgba(var(--accent-rgb),.16);
+  --line:rgba(243,235,224,.10);
+  --tint:255,255,255;--glass:29,23,18;--glass2:17,14,11;--scrim:5,4,3;--scrim-k:1;--shade-k:1;--err:#ef8b78;
+  --side1:#15110e;--side2:#100d0b;--dock:23,19,15
+}
+/* Light theme (warm paper): the disc stays black vinyl. */
+:root[data-theme="light"]{
+  --bg:#e6dccd;--shell:#f3ece1;--panel:#f8f2e8;--panel2:#fffaf2;--panel3:#efe6d8;--text:#241a12;--muted:#6b5c4e;--line:rgba(36,26,18,.12);--tint:70,48,28;--glass:255,250,242;--glass2:243,236,225;--scrim:40,28,18;--scrim-k:.5;--shade-k:.35;--err:#a63d2c;
+  --side1:#efe6d8;--side2:#e9dfcf;--dock:255,250,242
+}
+:root[data-theme="light"] .switch::after{background:#fff;box-shadow:0 1px 3px rgba(36,26,18,.3)}
+.themepreview{position:fixed;top:10px;right:10px;z-index:500;display:flex;align-items:center;gap:8px;padding:5px 6px 5px 12px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--glass),.92);backdrop-filter:blur(10px);box-shadow:0 8px 24px rgba(0,0,0,calc(.4*var(--shade-k)));font-size:11px;color:var(--muted)}
+.themepreview button{border:0;border-radius:999px;padding:5px 10px;background:transparent;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+.themepreview button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.themepreview button:focus-visible{outline:2px solid var(--accent-readable);outline-offset:2px}
+/* A theme change swaps every colour at once instead of some fading and some snapping. */
+.theme-swap,.theme-swap *,.theme-swap *::before,.theme-swap *::after{transition:none!important}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;overflow:hidden;
+  color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:
+    radial-gradient(1200px 760px at 12% 0%,rgba(var(--accent-rgb),.10),transparent 58%),
+    radial-gradient(900px 700px at 92% 100%,rgba(120,80,50,.14),transparent 62%),
+    var(--bg)
+}
+button,input,select{font:inherit}
+button{color:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent-readable);outline-offset:2px}
+.app{
+  position:relative;width:min(1480px,calc(100vw - 48px));height:min(860px,calc(100vh - 48px));min-height:560px;
+  display:grid;grid-template-columns:236px minmax(0,1fr) 332px;grid-template-rows:minmax(0,1fr) 86px;
+  border:1px solid rgba(var(--tint),.09);border-radius:26px;overflow:hidden;overflow:clip;background:var(--shell);
+  box-shadow:0 40px 110px rgba(0,0,0,calc(.68*var(--shade-k))),inset 0 0 0 1px rgba(0,0,0,calc(.5*var(--shade-k)));isolation:isolate
+}
+.app.queue-collapsed{grid-template-columns:236px minmax(0,1fr) 0}
+.app.queue-collapsed .queue{display:none}
+
+.sidebar{
+  grid-column:1;grid-row:1/3;min-height:0;display:flex;flex-direction:column;padding:22px 14px 16px;
+  border-right:1px solid var(--line);background:linear-gradient(180deg,var(--side1) 0%,var(--side2) 100%)
+}
+.brandrow{display:flex;align-items:center;gap:12px;padding:2px 8px 26px;flex:0 0 auto}
+.brandmark{
+  width:34px;height:34px;border-radius:10px;position:relative;flex:0 0 auto;overflow:hidden;
+  background:repeating-radial-gradient(circle at 50% 50%,#1b1510 0 1px,#090807 1px 3px);
+  border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 14px #000
+}
+.brandmark::after{
+  content:"";position:absolute;inset:9px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 14px rgba(var(--accent-rgb),.45)
+}
+.brandmark::before{
+  content:"";position:absolute;z-index:1;top:50%;left:50%;transform:translate(-38%,-50%);
+  border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:7px solid #26180c
+}
+.brandname{display:block;font-size:12px;font-weight:800;letter-spacing:.19em;text-transform:uppercase}
+.brandsub{display:block;margin-top:3px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.nav{display:flex;flex-direction:column;gap:3px;flex:0 0 auto}
+.navitem{
+  position:relative;display:flex;align-items:center;gap:11px;width:100%;padding:10px 11px;border:0;border-radius:11px;
+  background:transparent;color:var(--muted);font-size:13px;text-align:left;cursor:pointer;
+  transition:background .2s,color .2s
+}
+.navitem svg{width:18px;height:18px;flex:0 0 auto}
+
+/* Inbox: background tasks such as Convert to Audio (PM, 2026-11-04: desktop gets an Inbox like Android) */
+.navbadge{margin-left:auto;padding:2px 7px;border-radius:999px;background:var(--accent);color:var(--accent-ink);font-size:10px;font-weight:700}
+.navitem:has(.navbadge:not([hidden]))::after{display:none}
+.inbox-note{margin:0 0 18px;color:var(--muted);font-size:12px}
+.inbox-task{max-width:640px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--panel2)}
+.inbox-task + .inbox-task{margin-top:12px}
+.inbox-task-head{display:flex;align-items:center;gap:12px}
+.inbox-task-icon{display:grid;place-items:center;width:38px;height:38px;border:1px solid rgba(var(--accent-rgb),.3);border-radius:12px;background:var(--soft);color:var(--accent-readable)}
+.inbox-task-copy{min-width:0;flex:1}
+.inbox-task-copy strong,.inbox-task-copy small{display:block}
+.inbox-task-copy strong{font-size:13px}
+.inbox-task-copy small,.inbox-task-meta{color:var(--muted);font-size:11px}
+.inbox-task-percent{color:var(--accent-readable);font-size:13px;font-weight:750}
+.inbox-task-stage{margin:12px 0 0;font-size:12px}
+.inbox-task-meta{display:flex;justify-content:space-between;margin-top:7px}
+.inbox-task-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.inbox-empty{max-width:640px;padding:22px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);text-align:center;font-size:12px}
+.export-progress-bar{height:6px;margin-top:8px;overflow:hidden;border-radius:10px;background:rgba(var(--tint),.12)}
+.export-progress-fill{width:0;height:100%;border-radius:inherit;background:var(--accent-readable);transition:width .25s ease}
+.navitem:hover{background:rgba(var(--tint),.045);color:var(--text)}
+.navitem.on{background:var(--soft);color:var(--text);font-weight:600}
+.navitem::after{
+  content:"";position:absolute;right:12px;width:6px;height:6px;border-radius:50%;
+  background:var(--accent-readable);opacity:.28;box-shadow:0 0 0 3px rgba(var(--accent-rgb),.08);
+  transition:opacity .2s,box-shadow .2s
+}
+.navitem:hover::after{opacity:.9;box-shadow:0 0 0 3px rgba(var(--accent-rgb),.18),0 0 13px rgba(var(--accent-rgb),.9)}
+.navitem.on::after{opacity:1;box-shadow:0 0 0 3px rgba(var(--accent-rgb),.22),0 0 14px rgba(var(--accent-rgb),.95)}
+.sideblock{margin-top:28px;min-height:0;display:flex;flex-direction:column;gap:3px;overflow-y:auto;scrollbar-width:none}
+.sideblock::-webkit-scrollbar{display:none}
+.side-label{margin:0 8px 8px;font-size:9px;letter-spacing:.17em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.sideplaylist{
+  display:flex;align-items:center;gap:9px;width:100%;padding:8px;border:0;border-radius:10px;
+  background:transparent;color:var(--muted);font-size:12px;text-align:left;cursor:pointer
+}
+.sideplaylist:hover{background:rgba(var(--tint),.04);color:var(--text)}
+.sp-art{width:26px;height:26px;border-radius:7px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(var(--tint),.09)}
+.sp-name{min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-count{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.sidefoot{
+  margin-top:auto;padding:16px 8px 4px;border-top:1px solid var(--line);
+  display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:9px;letter-spacing:.12em;text-transform:uppercase
+}
+.local{display:flex;align-items:center;gap:7px;color:var(--text);font-weight:700}
+.local::before{
+  content:"";width:6px;height:6px;border-radius:50%;background:var(--accent-readable);
+  box-shadow:0 0 10px rgba(var(--accent-rgb),.9)
+}
+
+.main{grid-column:2;grid-row:1;position:relative;min-width:0;min-height:0;overflow:hidden;background:radial-gradient(700px 500px at 35% 45%,rgba(var(--accent-rgb),.055),transparent 70%),var(--panel)}
+.view{
+  position:absolute;inset:0;overflow-y:auto;padding:28px 34px 28px;opacity:0;visibility:hidden;pointer-events:none;
+  transform:translateY(8px);transition:opacity .28s ease,transform .28s ease,visibility .28s;
+  scrollbar-width:thin;scrollbar-color:rgba(var(--tint),.16) transparent
+}
+.view.on{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0)}
+.view::-webkit-scrollbar{width:8px}
+.view::-webkit-scrollbar-thumb{background:rgba(var(--tint),.14);border-radius:999px}
+.view::-webkit-scrollbar-track{background:transparent}
+.viewhead{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:22px}
+.eyebrow{margin:0 0 5px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.viewhead h1{margin:0;font-size:30px;line-height:1;letter-spacing:-.035em}
+.headmeta{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:11px;white-space:nowrap}
+.pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;background:rgba(var(--tint),.025)}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 15px;border-radius:12px;
+  border:1px solid var(--line);background:transparent;color:var(--text);font-size:12px;font-weight:600;
+  cursor:pointer;white-space:nowrap;transition:background .2s,border-color .2s,color .2s
+}
+.btn:hover{border-color:rgba(var(--accent-rgb),.5);background:rgba(var(--tint),.035)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{background:color-mix(in srgb,var(--accent) 82%,#fff)}
+.btn svg{width:16px;height:16px;flex:0 0 auto}
+.iconbtn{
+  width:34px;height:34px;flex:0 0 auto;border-radius:50%;border:1px solid var(--line);
+  background:rgba(var(--tint),.03);color:var(--muted);display:grid;place-items:center;cursor:pointer;
+  transition:border-color .2s,color .2s,background .2s
+}
+.iconbtn:hover{border-color:rgba(var(--accent-rgb),.55);color:var(--accent-readable);background:rgba(var(--tint),.05)}
+.iconbtn svg{width:16px;height:16px}
+.playic{display:block}
+.pause{display:none}
+body.playing .playic{display:none}
+body.playing .pause{display:block}
+
+.home-view{padding-top:30px}
+.homegrid{
+  display:grid;grid-template-columns:minmax(330px,1.05fr) minmax(260px,.95fr);
+  gap:28px;align-items:center;min-height:calc(100% - 58px)
+}
+.discspot{position:relative;display:grid;place-items:center;min-height:470px}
+.discspot::before{
+  content:"";position:absolute;width:460px;height:460px;border-radius:50%;
+  background:radial-gradient(circle,rgba(var(--accent-rgb),.18),transparent 66%);filter:blur(18px)
+}
+.discspot::after{
+  content:"";position:absolute;width:424px;height:424px;border-radius:50%;
+  border:2px dotted rgba(var(--accent-rgb),.5);pointer-events:none;
+  filter:drop-shadow(0 0 2px rgba(var(--accent-rgb),.9));
+  /* Marquee lights: a slow turn moves the dots around the disc at about the Android arc's speed. */
+  animation:ring-lights 120s linear infinite
+}
+@keyframes ring-lights{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.discspot::after{animation:none}}
+.disc{
+  position:relative;width:360px;height:360px;padding:0;cursor:pointer;border:1px solid rgba(255,255,255,.07);
+  border-radius:50%;
+  background:
+    radial-gradient(circle at 50% 50%,#1a1511 0 27%,transparent 28%),
+    repeating-radial-gradient(circle at 50% 50%,#14110e 0 1px,#0a0908 1px 3px);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.85),0 26px 60px rgba(0,0,0,.52);
+  transition:filter .2s;z-index:1;--disc-size:360px
+}
+.disc:hover{filter:brightness(1.08)}
+.disc::after{
+  content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  background:conic-gradient(from 0deg,transparent 0 34deg,rgba(255,255,255,.07) 44deg,transparent 56deg 178deg,rgba(255,255,255,.045) 196deg,transparent 214deg 360deg);
+  mix-blend-mode:screen
+}
+.label{
+  position:absolute;top:50%;left:50%;width:54%;height:54%;overflow:hidden;transform:translate(-50%,-50%);
+  border-radius:50%;border:3px solid rgba(0,0,0,.45);
+  background:linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14);
+  box-shadow:inset 0 0 22px rgba(0,0,0,.55)
+}
+.label::before{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(circle at 30% 25%,rgba(255,255,255,.35),transparent 42%),linear-gradient(180deg,transparent 55%,rgba(0,0,0,.38))
+}
+.label::after{
+  content:"SIDE A";position:absolute;bottom:11px;left:0;right:0;text-align:center;
+  font-size:10px;letter-spacing:.18em;color:rgba(26,18,12,.78);font-weight:800
+}
+.hole{
+  position:absolute;top:50%;left:50%;width:10px;height:10px;z-index:3;transform:translate(-50%,-50%);
+  border-radius:50%;background:#0b0908;box-shadow:0 0 0 3px rgba(0,0,0,.35)
+}
+/* Disc rotation is driven by the script at the end of the page so it can speed up and slow down gradually. */
+@media(prefers-reduced-motion:reduce){.disc{animation:none!important}.view{transition:none!important}}
+.nowcopy .eyebrow{margin-bottom:12px}
+.nowcopy h2{margin:0;font-size:clamp(34px,3.3vw,46px);line-height:1.02;letter-spacing:-.045em}
+.nowartist{margin:9px 0 0;font-size:15px;color:color-mix(in srgb,var(--text) 88%,transparent)}
+.nowalbum{margin:5px 0 0;font-size:12px;color:var(--muted)}
+.nowalbum .sep{margin:0 7px;opacity:.6}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}
+.chip{
+  padding:5px 9px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--tint),.025);
+  color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase
+}
+.chip.accent{border-color:rgba(var(--accent-rgb),.28);background:var(--soft);color:var(--accent-readable)}
+.nowactions{display:flex;flex-wrap:wrap;gap:9px;margin-top:28px}
+.nowactions .btn{padding:11px 16px}
+.micro{margin:18px 0 0;color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+
+.queue{
+  grid-column:3;grid-row:1;min-height:0;display:flex;flex-direction:column;
+  border-left:1px solid var(--line);background:linear-gradient(180deg,rgba(var(--glass),.5),rgba(var(--glass2),.88))
+}
+.qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:26px 20px 14px;flex:0 0 auto}
+.qhead h2{margin:0;font-size:15px;letter-spacing:-.01em}
+.qcount{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.qlist{flex:1;min-height:0;overflow-y:auto;padding:0 12px 10px;display:flex;flex-direction:column;gap:3px;scrollbar-width:thin;scrollbar-color:rgba(var(--tint),.16) transparent}
+.qlist::-webkit-scrollbar{width:7px}
+.qlist::-webkit-scrollbar-thumb{background:rgba(var(--tint),.14);border-radius:999px}
+.qrow{
+  position:relative;display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:10px;
+  width:100%;padding:8px;border:0;border-radius:12px;background:transparent;color:inherit;text-align:left;cursor:pointer
+}
+.qrow:hover{background:rgba(var(--tint),.04)}
+.qrow.current{background:var(--soft)}
+.qrow.current::before{
+  content:"";position:absolute;left:0;top:50%;width:3px;height:24px;transform:translateY(-50%);
+  border-radius:0 3px 3px 0;background:var(--accent-readable);box-shadow:0 0 10px rgba(var(--accent-rgb),.7)
+}
+.qart{width:40px;height:40px;border-radius:9px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(var(--tint),.08)}
+.qmeta{min-width:0;display:flex;flex-direction:column;gap:2px}
+.qtitle{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qrow.current .qtitle{color:var(--accent-readable)}
+.qsub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qtime{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.details{
+  flex:0 0 auto;margin:0 16px 16px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);
+  background:rgba(var(--tint),.02)
+}
+.dhead{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.dgrid{display:grid;grid-template-columns:76px minmax(0,1fr);gap:7px 10px;margin:10px 0 0;font-size:11px}
+.dgrid dt{color:var(--muted)}
+.dgrid dd{margin:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.dock{
+  grid-column:2/4;grid-row:2;display:grid;grid-template-columns:minmax(190px,1fr) minmax(360px,2.2fr) minmax(160px,1fr);
+  align-items:center;gap:20px;padding:10px 22px;border-top:1px solid var(--line);
+  background:rgba(var(--dock),.96);backdrop-filter:blur(18px);z-index:10;min-width:0
+}
+.docktrack{display:flex;align-items:center;gap:10px;min-width:0;padding:0;border:0;background:transparent;text-align:left;cursor:pointer;border-radius:10px}
+.dockart{width:46px;height:46px;border-radius:10px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(var(--tint),.08)}
+.dockmeta{min-width:0;display:flex;flex-direction:column;gap:2px}
+.docktitle{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dockartist{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dockcenter{display:flex;flex-direction:column;gap:3px;min-width:0}
+.transport{display:flex;align-items:center;justify-content:center;gap:8px}
+.tbtn{
+  position:relative;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--text);
+  display:grid;place-items:center;cursor:pointer;transition:background .2s,color .2s
+}
+.tbtn:hover{background:rgba(var(--tint),.06);color:var(--accent-readable)}
+.tbtn svg{width:17px;height:17px}
+.tbtn.active{color:var(--accent-readable)}
+.playmain{
+  width:38px;height:38px;border:0;border-radius:50%;background:var(--accent);color:var(--accent-ink);
+  display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(var(--accent-rgb),.24);
+  transition:background .2s
+}
+.playmain:hover{background:color-mix(in srgb,var(--accent) 82%,#fff)}
+.playmain svg{width:18px;height:18px}
+.repeatone{display:none}
+.tbtn.one .repeatone{display:block}
+.badge{position:absolute;margin:-14px 0 0 14px;font-size:8px;font-weight:800}
+.dockseek{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+.dockseek input{flex:1;min-width:0;height:3px;accent-color:var(--accent-readable);cursor:pointer}
+.dockright{display:flex;align-items:center;justify-content:flex-end;gap:8px;color:var(--muted)}
+.vol{width:78px;height:3px;accent-color:var(--accent-readable);cursor:pointer}
+.volicon{width:16px;height:16px;flex:0 0 auto}
+
+.library-bar{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.search{
+  display:flex;align-items:center;gap:10px;flex:1;min-width:0;background:var(--panel2);
+  border:1px solid var(--line);border-radius:12px;padding:9px 12px
+}
+.search svg{width:16px;height:16px;color:var(--muted);flex:0 0 auto}
+.search input{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:12px;outline:none}
+.search input::placeholder{color:rgba(163,147,128,.7)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:transparent;color:var(--muted);padding:7px 10px;border-radius:999px;font-size:11px;cursor:pointer}
+.tab.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.songhead,.songrow{display:grid;grid-template-columns:42px minmax(0,1.5fr) minmax(0,.9fr) 46px 26px;gap:12px;align-items:center}
+.songhead{padding:0 10px 7px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.songlist{display:flex;flex-direction:column;gap:2px;padding-bottom:10px}
+.songrow{width:100%;padding:8px 10px;border-radius:12px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.songrow:hover{background:rgba(var(--tint),.04)}
+.songrow.current{background:var(--soft);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.15)}
+.sart{width:42px;height:42px;border-radius:9px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(var(--tint),.08)}
+.songmain{min-width:0;display:flex;flex-direction:column;gap:2px}
+.stitle{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.songrow.current .stitle{color:var(--accent-readable)}
+.ssub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.salbum{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stime{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+.smore{width:24px;height:24px;border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;border-radius:50%}
+.smore:hover{color:var(--accent-readable);background:rgba(var(--tint),.05)}
+.empty{display:none;padding:30px 10px;color:var(--muted);font-size:12px;text-align:center}
+
+.playgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.playcard{
+  padding:9px;border:1px solid var(--line);border-radius:16px;background:rgba(var(--tint),.018);
+  color:inherit;text-align:left;cursor:pointer;transition:background .2s,border-color .2s,transform .2s
+}
+.playcard:hover{background:rgba(var(--tint),.04);border-color:rgba(var(--accent-rgb),.28);transform:translateY(-2px)}
+.pcover{
+  display:block;width:100%;aspect-ratio:1;border-radius:11px;position:relative;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)
+}
+.pcover::before{
+  content:"";position:absolute;inset:24%;border-radius:50%;
+  background:repeating-radial-gradient(circle at 50% 50%,rgba(10,8,6,.35) 0 1px,rgba(255,255,255,.04) 1px 3px);
+  box-shadow:0 10px 30px rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.12)
+}
+.pcover::after{
+  content:"";position:absolute;top:50%;left:50%;width:23%;height:23%;transform:translate(-50%,-50%);
+  border-radius:50%;background:rgba(10,8,6,.5);border:2px solid rgba(255,255,255,.2)
+}
+.pcname{display:block;margin:9px 2px 0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcsub{display:block;margin:2px 2px 3px;font-size:10px;color:var(--muted)}
+.plcovernote{margin:5px 0 0;font-size:10px;color:var(--muted)}
+.playlist-options{margin-left:2px}
+.option-list{display:flex;flex-direction:column;gap:4px}
+.option-btn{width:100%;padding:11px 12px;border:0;border-radius:10px;background:transparent;color:var(--text);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.option-btn:hover{background:rgba(var(--tint),.05)}
+.option-btn.danger{color:#e8836a}
+.choice-list{display:flex;flex-direction:column;gap:5px;margin:12px 0}
+.choice{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:rgba(var(--tint),.02);color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.choice:hover{border-color:rgba(var(--accent-rgb),.35);background:rgba(var(--accent-rgb),.05)}
+.choice small{display:block;margin-top:3px;color:var(--muted);font-size:10px}
+.btn:disabled{opacity:.48;cursor:not-allowed}
+
+.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;padding-bottom:10px}
+.panelcard{padding:16px 16px 6px;border:1px solid var(--line);border-radius:18px;background:rgba(var(--tint),.018)}
+.panelcard h3{margin:0 0 7px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.rtext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rlabel{font-size:13px}
+.rsub{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatches{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.swatch{width:22px;height:22px;border-radius:50%;border:1px solid rgba(var(--tint),.28);padding:0;cursor:pointer;transition:transform .15s,box-shadow .15s}
+.swatch:hover{transform:scale(1.12)}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--panel2),0 0 0 4px var(--text)}
+.swatch.custom{position:relative;display:grid;place-items:center;background:conic-gradient(from 0deg,#e8836a,#e0a458,#b9d36a,#7fd1b9,#7fb8e8,#b39ddb,#e79ab5,#e8836a)}
+.swatch.custom::after{content:"";width:12px;height:12px;border-radius:50%;background:var(--custom-accent,var(--panel2));box-shadow:0 0 0 1px rgba(0,0,0,calc(.25*var(--shade-k)))}
+.select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:7px 9px;font-size:11px}
+.switch{position:relative;width:42px;height:24px;flex:0 0 auto;border:0;border-radius:999px;background:rgba(var(--tint),.14);cursor:pointer;transition:background .2s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#f3ebe0;transition:transform .2s,background .2s}
+.switch[aria-pressed="true"]{background:var(--accent)}
+.switch[aria-pressed="true"]::after{transform:translateX(18px);background:var(--accent-ink)}
+
+.overlay{
+  position:absolute;inset:0;z-index:100;display:grid;place-items:center;padding:26px;overflow:auto;
+  visibility:hidden;pointer-events:none
+}
+.overlay::before{
+  content:"";position:absolute;inset:0;background:rgba(var(--scrim),calc(.74*var(--scrim-k)));backdrop-filter:blur(6px);
+  opacity:0;transition:opacity .2s
+}
+.overlay.on{visibility:visible;pointer-events:auto}
+.overlay.on::before{opacity:1}
+.overlay-card{
+  position:relative;width:100%;max-width:390px;max-height:calc(100% - 10px);overflow-y:auto;
+  padding:20px;border-radius:22px;border:1px solid rgba(var(--tint),.12);background:var(--panel2);
+  box-shadow:0 30px 80px rgba(0,0,0,calc(.65*var(--shade-k)));transform:translateY(10px) scale(.985);opacity:0;
+  transition:transform .22s,opacity .22s;scrollbar-width:thin;scrollbar-color:rgba(var(--tint),.16) transparent
+}
+.overlay.on .overlay-card{transform:none;opacity:1}
+.overlay-card:focus{outline:none}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px}
+.modal-head h3{margin:0;font-size:20px;letter-spacing:-.02em}
+.modal-head .eyebrow{margin-bottom:3px}
+.export-progress-panel{margin-top:16px;padding:14px;border:1px solid var(--line);border-radius:16px;background:rgba(var(--tint),.025)}
+.export-progress-head{display:flex;justify-content:space-between;gap:10px;font-size:12px}
+.export-progress-head span:last-child{color:var(--accent-readable);font-variant-numeric:tabular-nums}
+.export-progress-track{height:7px;margin-top:8px;overflow:hidden;border-radius:10px;background:rgba(var(--tint),.12)}
+.export-progress-fill{width:0;height:100%;border-radius:inherit;background:var(--accent-readable);transition:width .25s ease}
+.export-progress-meta{display:flex;justify-content:space-between;gap:8px;margin-top:7px;color:var(--muted);font-size:10px}
+.accent-card{max-width:390px}
+.svwrap{position:relative;border-radius:13px;overflow:hidden;border:1px solid rgba(var(--tint),.12);background:#000}
+.svwrap:has(#svCanvas:focus-visible){outline:2px solid var(--accent-readable);outline-offset:2px}
+#svCanvas{display:block;width:100%;height:190px;cursor:crosshair;touch-action:none;outline:none}
+.svdot{position:absolute;left:0;top:0;width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,calc(.65*var(--shade-k))),0 2px 8px rgba(0,0,0,calc(.45*var(--shade-k)));transform:translate(-50%,-50%);pointer-events:none}
+.hue{
+  display:block;width:100%;height:18px;margin:14px 0 4px;padding:0;border:1px solid rgba(var(--tint),.14);
+  border-radius:999px;appearance:none;background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);cursor:pointer
+}
+.hue::-webkit-slider-thumb{appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;border:3px solid var(--picker-preview,#e0a458);box-shadow:0 2px 6px rgba(0,0,0,calc(.5*var(--shade-k)));cursor:pointer}
+.hue::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid var(--picker-preview,#e0a458);box-shadow:0 2px 6px rgba(0,0,0,calc(.5*var(--shade-k)));cursor:pointer}
+.previewrow{display:flex;align-items:center;gap:10px;margin:12px 0 16px;font-size:12px;color:var(--muted)}
+.previewdot{width:28px;height:28px;border-radius:50%;background:#e0a458;border:1px solid rgba(var(--tint),.2);flex:0 0 auto}
+.previewhex{margin-left:auto;color:var(--text);font-weight:700;letter-spacing:.05em;font-variant-numeric:tabular-nums}
+.accent-actions{display:flex;gap:10px}
+.accent-actions .btn{flex:1}
+
+.meta-card{max-width:650px}
+.metacover{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+.mart{width:92px;height:92px;border-radius:15px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(var(--tint),.08)}
+.metaform{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field.wide{grid-column:1/-1}
+.field label{font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.field input{padding:10px 11px;border-radius:10px;border:1px solid var(--line);background:var(--panel3);color:var(--text);font-size:12px;outline:none}
+.field input:focus{border-color:var(--accent-readable)}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:12px;grid-column:1/-1}
+.warn{margin:4px 0 0;padding:10px 12px;border-radius:11px;border:1px solid rgba(var(--accent-rgb),.25);background:rgba(var(--accent-rgb),.08);color:var(--accent-readable);font-size:10px;line-height:1.5;grid-column:1/-1}
+.metaactions{display:flex;gap:10px;margin-top:18px;grid-column:1/-1}
+.metaactions .btn{flex:1}
+
+.toast{
+  position:absolute;left:50%;bottom:102px;transform:translate(-50%,12px);z-index:90;padding:9px 14px;
+  border-radius:999px;background:rgba(var(--glass),.97);border:1px solid rgba(var(--accent-rgb),.3);
+  color:var(--accent-readable);font-size:12px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s
+}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+[hidden]{display:none!important}
+.btn[aria-pressed="true"]{background:var(--soft);border-color:rgba(var(--accent-rgb),.4);color:var(--accent-readable)}
+.btn.stamp{background:var(--soft);border-color:rgba(var(--accent-rgb),.4);color:var(--accent-readable);font-variant-numeric:tabular-nums}
+.btn.stamp:hover{background:rgba(var(--accent-rgb),.24)}
+.note{margin:12px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
+.seg{display:inline-flex;flex:0 0 auto;padding:3px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--tint),.03)}
+.seg button{border:0;background:transparent;color:var(--muted);font-size:11px;padding:6px 11px;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:700}
+/* Gap between songs: a number the user can step or type; never below 0 (PM, 2026-11-04). */
+.stepper{display:inline-flex;align-items:center;flex:0 0 auto;padding:3px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--tint),.03)}
+.stepper button{width:30px;height:28px;border:0;border-radius:999px;background:transparent;color:var(--text);font:inherit;font-size:16px;line-height:1;cursor:pointer}
+.stepper button:hover:not(:disabled){background:rgba(var(--tint),.06)}
+.stepper button:disabled{opacity:.35;cursor:not-allowed}
+.stepper button:focus-visible{outline:2px solid var(--accent-readable);outline-offset:2px}
+.stepper input{width:40px;border:0;background:transparent;color:var(--text);font:inherit;font-size:13px;font-weight:700;text-align:right;-moz-appearance:textfield;appearance:textfield}
+.stepper input::-webkit-outer-spin-button,.stepper input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.stepper input:focus-visible{outline:none}
+.stepper:focus-within{border-color:rgba(var(--accent-rgb),.55)}
+.stepper .unit{padding:0 6px 0 2px;color:var(--muted);font-size:12px}
+.linkbtn{border:0;background:transparent;color:var(--accent-readable);font-size:11px;font-weight:600;letter-spacing:.02em;text-transform:none;cursor:pointer;padding:4px 2px;border-radius:8px}
+.linkbtn:hover{text-decoration:underline}
+.fileicon{width:40px;height:40px;border-radius:10px;flex:0 0 auto;display:grid;place-items:center;background:var(--soft);color:var(--accent-readable);font-size:9px;font-weight:800;letter-spacing:.04em}
+.chipfix{padding:5px 10px;border-radius:999px;border:1px solid rgba(var(--accent-rgb),.3);background:var(--soft);color:var(--accent-readable);font-size:10px;font-weight:700;letter-spacing:.04em}
+
+/* lyrics on home */
+.lyrics{display:none;width:min(460px,100%);margin-top:20px;padding:12px 16px 6px;border-radius:18px;border:1px solid var(--line);background:rgba(var(--tint),.022)}
+.home-view.lyrics-on .lyrics{display:block}
+.lyrichead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.lyricwin{
+  position:relative;height:132px;margin-top:6px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,transparent 4%,#000 30%,#000 72%,transparent);
+  mask-image:linear-gradient(180deg,transparent 4%,#000 30%,#000 72%,transparent)
+}
+.lyriclist{position:absolute;left:0;right:0;top:0;margin:0;padding:0;list-style:none;transition:transform .45s cubic-bezier(.22,.61,.36,1)}
+.lyriclist li{padding:5px 4px;font-size:15px;line-height:1.4;color:var(--muted);opacity:.6;text-align:center;cursor:pointer;transition:color .3s,opacity .3s}
+.lyriclist li:hover{opacity:.9}
+.lyriclist li.past{opacity:.35}
+.lyriclist li.on{color:var(--text);opacity:1;font-weight:700}
+.lyriclist li.untimed{cursor:default}
+.lyricempty{display:none;flex-direction:column;align-items:center;gap:4px;padding:22px 0 16px;font-size:12px;color:var(--muted)}
+.lyrics.empty .lyricwin{display:none}
+.lyrics.empty .lyricempty{display:flex}
+@media(prefers-reduced-motion:reduce){.lyriclist{transition:none}}
+
+/* lyrics editor */
+.lyrics-card{max-width:680px}
+.lrcfile{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.lrcmeta{min-width:0;display:flex;flex-direction:column;gap:2px}
+.lrcname{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lyrtools{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.ltransport{
+  flex:1;min-width:260px;display:flex;align-items:center;gap:9px;padding:4px 12px 4px 4px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel3);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums
+}
+.ltransport input{flex:1;min-width:0;height:3px;accent-color:var(--accent-readable);cursor:pointer}
+.ltime{color:var(--text);font-weight:700;font-size:11px;min-width:58px}
+.lines{position:relative;display:flex;flex-direction:column;gap:3px;max-height:310px;overflow-y:auto;padding-right:4px;scrollbar-width:thin;scrollbar-color:rgba(var(--tint),.16) transparent}
+.lrow{display:flex;align-items:center;gap:8px;padding:3px;border-radius:11px;border:1px solid transparent;transition:background .15s,border-color .15s}
+.lrow.sel{border-color:rgba(var(--accent-rgb),.45);background:rgba(var(--accent-rgb),.07)}
+.lstamp{
+  flex:0 0 auto;width:78px;padding:7px 0;border-radius:8px;border:1px solid var(--line);background:var(--panel3);
+  color:var(--accent-readable);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer
+}
+.lstamp.unset{color:var(--muted);font-weight:500}
+.ltext{flex:1;min-width:0;padding:7px 8px;border:0;border-radius:8px;background:transparent;color:var(--text);font-size:13px;outline:none}
+.ltext:focus{background:rgba(var(--tint),.05)}
+.ltext:focus-visible{outline:none}
+.ldel{width:26px;height:26px;flex:0 0 auto;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:16px;cursor:pointer}
+.ldel:hover{color:var(--accent-readable);background:rgba(var(--tint),.05)}
+.lpaste{
+  display:none;width:100%;min-height:310px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);
+  background:var(--panel3);color:var(--text);font:inherit;font-size:13px;line-height:1.6;resize:vertical;outline:none
+}
+.lpaste:focus{border-color:var(--accent-readable)}
+.lyrics-card.paste .lpaste{display:block}
+.lyrics-card.paste .lines,.lyrics-card.paste .ltransport,.lyrics-card.paste .stampgroup{display:none}
+.lnote{margin:10px 2px 0;font-size:11px;color:var(--muted);line-height:1.5}
+.lyrfoot{display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.stampgroup{display:flex;align-items:center;gap:10px}
+.kbd{padding:3px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel3);font-size:10px;color:var(--muted);white-space:nowrap}
+.spacer{flex:1}
+
+/* playlist detail */
+.phead{display:flex;align-items:flex-end;gap:14px}
+.phero{display:flex;align-items:flex-end;gap:24px;margin-bottom:26px}
+.phcover{width:172px;flex:0 0 auto;border-radius:18px}
+.phinfo{min-width:0}
+.phsub{margin:0;font-size:12px;color:var(--muted)}
+.phinfo .nowactions{margin-top:16px}
+
+/* song details: a song that isn't playing, shown as a record sleeve */
+.dtgrid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:44px;align-items:center;max-width:980px}
+.dtsleeve{position:relative;width:360px;height:300px;flex:0 0 auto}
+.dtvinyl{
+  position:absolute;top:14px;right:0;width:272px;height:272px;border-radius:50%;z-index:0;
+  border:1px solid rgba(255,255,255,.07);
+  background:
+    radial-gradient(circle at 50% 50%,#1a1511 0 27%,transparent 28%),
+    repeating-radial-gradient(circle at 50% 50%,#14110e 0 1px,#0a0908 1px 3px);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.85),0 18px 40px rgba(0,0,0,.4);
+  transition:transform .5s cubic-bezier(.22,.61,.36,1)
+}
+.dtsleeve:hover .dtvinyl{transform:translateX(18px)}
+.dtlabel{position:absolute;top:50%;left:50%;width:36%;height:36%;transform:translate(-50%,-50%);border-radius:50%;border:3px solid rgba(0,0,0,.45);box-shadow:inset 0 0 18px rgba(0,0,0,.5)}
+.dtvinyl .hole{z-index:1}
+.dtcover{
+  position:absolute;left:0;top:0;width:300px;height:300px;border-radius:5px;z-index:1;
+  box-shadow:0 28px 60px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.08)
+}
+.dtcover::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;
+  background:linear-gradient(115deg,rgba(255,255,255,.22),transparent 38%),
+    linear-gradient(90deg,rgba(0,0,0,.35),transparent 6%,transparent 94%,rgba(0,0,0,.18))
+}
+.dtcover::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;opacity:.12;mix-blend-mode:overlay;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.6) 0 1px,transparent 1px 3px)
+}
+.dtinfo .nowartist{margin-top:0;font-size:18px}
+.dtfacts{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.dtfacts div{min-width:92px}
+.dtfacts div{padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(var(--tint),.025)}
+.dtfacts dt{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.dtfacts dd{margin:4px 0 0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dtinfo .nowactions{margin-top:22px;align-items:center}
+.dtinfo .note b{color:var(--text);font-weight:600}
+@media(max-width:1100px){.dtgrid{grid-template-columns:1fr;gap:28px}.dtsleeve{transform:scale(.8);transform-origin:left top;height:240px}}
+@media(prefers-reduced-motion:reduce){.dtvinyl{transition:none}}
+
+/* one song menu: playlist-only actions sit under a divider */
+.option-sep{height:1px;background:var(--line);margin:4px 6px}
+
+/* playlist reordering: press and hold a row, then drag */
+#plSongs .songrow{-webkit-user-select:none;user-select:none}
+#plSongs .songrow.holding{background:rgba(var(--tint),.07);transition:background .45s ease}
+#plSongs.reordering .songrow{transition:transform .18s ease}
+#plSongs.reordering .songrow.dragging{
+  transition:none;position:relative;z-index:5;cursor:grabbing;background:var(--panel2);
+  box-shadow:0 12px 28px rgba(0,0,0,.35),0 0 0 1px rgba(var(--accent-rgb),.5)
+}
+@media(prefers-reduced-motion:reduce){#plSongs.reordering .songrow{transition:none}}
+.more{padding:12px 10px;font-size:11px;color:var(--muted)}
+.more.actionable{width:100%;border:0;background:transparent;text-align:left;font:inherit;cursor:pointer}
+.more.actionable:hover,.more.actionable:focus-visible{color:var(--accent-readable)}
+
+/* form modals */
+.form-card{max-width:440px}
+.form-card .row{padding:11px 0}
+.form-card .field{margin-top:12px}
+.field select{padding:10px 11px;border-radius:10px;border:1px solid var(--line);background:var(--panel3);color:var(--text);font-size:12px;outline:none}
+.field select:focus{border-color:var(--accent-readable)}
+.modalactions{display:flex;gap:10px;margin-top:18px}
+.modalactions .btn{flex:1}
+.droparea{
+  display:flex;flex-direction:column;align-items:center;gap:10px;padding:28px 16px;border-radius:16px;
+  border:1px dashed rgba(var(--accent-rgb),.35);background:rgba(var(--accent-rgb),.05);text-align:center;font-size:12px;line-height:1.5;color:var(--muted)
+}
+.stats{display:flex;gap:8px;margin:12px 0 8px}
+.stat{flex:1;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--tint),.03);font-size:11px;color:var(--muted)}
+.stat b{display:block;font-size:20px;color:var(--text)}
+.stat.warnstat b{color:var(--accent-readable)}
+.missing{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+.missing li::before{content:"⚠ ";color:var(--accent-readable)}
+.cvstat{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin:6px 0 10px;font-size:12px;color:var(--muted)}
+.cvstat b{display:block;margin-top:3px;font-size:14px;color:var(--text)}
+.cvpct{font-size:28px;font-weight:800;color:var(--text);font-variant-numeric:tabular-nums}
+.progress{height:8px;border-radius:999px;background:rgba(var(--tint),.08);overflow:hidden}
+.progress span{display:block;height:100%;width:0;border-radius:inherit;background:var(--accent);box-shadow:0 0 12px rgba(var(--accent-rgb),.6);transition:width .25s}
+.done{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:8px 0 2px;font-size:14px}
+.donemark{width:54px;height:54px;margin-bottom:4px;border-radius:50%;display:grid;place-items:center;background:var(--soft);color:var(--accent-readable)}
+.donemark svg{width:26px;height:26px}
+
+@media(max-width:1220px){
+  .app{grid-template-columns:210px minmax(0,1fr) 0}
+  .queue{display:none}
+  .dock{grid-column:2/4}
+  .homegrid{grid-template-columns:minmax(280px,.9fr) minmax(260px,1fr);gap:20px}
+  .disc{width:300px;height:300px;--disc-size:300px}
+  .discspot::before{width:390px;height:390px}
+  .discspot::after{width:360px;height:360px}
+}
+@media(max-width:900px){
+  body{padding:0;overflow:auto;display:block}
+  .app{width:100%;height:auto;min-height:100vh;border-radius:0;grid-template-columns:1fr;grid-template-rows:auto minmax(690px,1fr) 86px}
+  .sidebar{grid-column:1;grid-row:1;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}
+  .brandrow{padding:0;flex:0 0 auto}
+  .brandsub{display:none}
+  .nav{flex-direction:row;gap:2px;flex:1}
+  .navitem{padding:8px 10px;font-size:12px}
+  .navitem::after{display:none}
+  .sideblock,.sidefoot{display:none}
+  .main{grid-column:1;grid-row:2}
+  .dock{grid-column:1;grid-row:3;grid-template-columns:minmax(140px,1fr) minmax(280px,1.6fr) auto;gap:10px;padding:8px 14px}
+  .vol,.volicon{display:none}
+  .homegrid{grid-template-columns:1fr;justify-items:center;text-align:center;min-height:0;gap:20px}
+  .discspot{min-height:340px}
+  .disc{width:280px;height:280px;--disc-size:280px}
+  .discspot::before{width:330px;height:330px}
+  .discspot::after{width:310px;height:310px}
+  .nowactions,.chips{justify-content:center}
+  .view{padding:22px 18px}
+  .settings-grid,.playgrid{grid-template-columns:1fr}
+  .songhead,.songrow{grid-template-columns:40px minmax(0,1.4fr) 44px 24px}
+  .salbum,.songhead span:nth-child(3){display:none}
+  .metaform{grid-template-columns:1fr}
+  .field.wide,.frow,.warn,.metaactions{grid-column:1}
+  .frow{grid-template-columns:1fr 1fr}
+  .lyrics{margin-left:auto;margin-right:auto}
+  .phero{flex-direction:column;align-items:center;text-align:center}
+  .phinfo .nowactions{justify-content:center}
+  .kbd{display:none}
+}
+
+
+/* first run */
+.firstrunbtn{
+  position:fixed;top:4px;left:50%;transform:translateX(-50%);z-index:200;
+  font-size:10px;font-weight:700;color:var(--accent-ink);background:var(--accent);
+  border:1px solid var(--accent);border-radius:999px;padding:3px 12px;cursor:pointer
+}
+.firstrunbtn.mutebtn{left:calc(50% + 86px)}
+.firstrunbtn.sysaccentbtn{left:calc(50% + 230px)}
+.switch:disabled{opacity:.4;cursor:not-allowed}
+.firstrun{
+  position:absolute;inset:0;z-index:90;display:none;padding:34px 40px;
+  background:
+    radial-gradient(900px 600px at 20% 30%,rgba(var(--accent-rgb),.08),transparent 60%),
+    var(--shell)
+}
+.firstrun.on{display:grid;grid-template-columns:minmax(330px,1.05fr) minmax(300px,.95fr);gap:28px;align-items:center}
+.firstrun .discspot::after{animation-play-state:paused;opacity:.45}
+body.scanning .firstrun .discspot::after{animation:ring-lights 16s linear infinite;opacity:1}
+.firstrun .disc{cursor:default}
+.firstrun .disc:hover{filter:none}
+.label.blank{background:linear-gradient(135deg,#3a312a,#211b16 60%,#16120f)}
+.label.blank::after{color:rgba(243,235,224,.35)}
+.frbrand{position:absolute;top:24px;left:28px;display:flex;align-items:center;gap:10px}
+.wstep{display:none;flex-direction:column;align-items:flex-start;gap:12px;max-width:440px}
+.wstep.on{display:flex}
+.wstep h1{margin:0;font-size:clamp(32px,3vw,42px);line-height:1.04;letter-spacing:-.04em}
+.wstep p{margin:0;color:var(--muted);font-size:14px;line-height:1.6}
+.wcount{font-size:64px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--accent-readable)}
+.wfile{font-size:12px;color:var(--muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.foldercard{
+  display:flex;align-items:center;gap:14px;width:100%;margin-top:6px;padding:14px 16px;border-radius:16px;
+  border:1px solid rgba(var(--accent-rgb),.28);background:var(--soft)
+}
+.foldercard .ficon{font-size:22px}
+.foldercard .fmeta{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.foldercard .fpath{font-weight:700;font-size:15px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.foldercard .fsub{font-size:11.5px;color:var(--muted)}
+.wpoints{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.wpoints li{display:flex;gap:10px;align-items:center;font-size:13px}
+.wpoints svg{width:16px;height:16px;color:var(--accent-readable);flex:0 0 auto}
+.wactions{display:flex;gap:10px;align-items:center;margin-top:10px}
+.wactions .btn{padding:12px 20px;font-size:13px}
+
+/* folder chooser: the system's own dialog, drawn plainly */
+.syschooser{position:absolute;inset:0;z-index:120;display:none;place-items:center;background:rgba(5,4,3,.6)}
+.syschooser.on{display:grid}
+.syschooser .win{width:460px;border-radius:12px;overflow:hidden;background:#f4f2ef;color:#1f1d1a;box-shadow:0 30px 80px rgba(0,0,0,.6);font-family:Cantarell,"Noto Sans",ui-sans-serif,system-ui,sans-serif}
+.syschooser .wbar{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#e6e2dd;font-size:13px;font-weight:700}
+.syschooser .wbar small{font-weight:400;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#7b746c}
+.syschooser .wrows{padding:6px 0;max-height:260px;overflow:auto}
+.syschooser .wrow{display:flex;gap:12px;align-items:center;width:100%;padding:9px 16px;border:0;background:none;font:inherit;font-size:13px;color:#1f1d1a;text-align:left;cursor:pointer}
+.syschooser .wrow:hover{background:#ebe7e2}
+.syschooser .wrow.sel{background:#3d5a80;color:#fff}
+.syschooser .wrow .fi{width:18px;height:14px;border-radius:2px;background:#9a8f84;flex:0 0 auto}
+.syschooser .wrow.sel .fi{background:#dfe7f1}
+.syschooser .wfoot{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #ddd8d2}
+.syschooser .wfoot button{border:1px solid #c9c3bc;background:#fff;border-radius:8px;padding:7px 14px;font:inherit;font-size:12.5px;cursor:pointer;color:#1f1d1a}
+.syschooser .wfoot button.go{background:#3d5a80;border-color:#3d5a80;color:#fff}
+
+/* albums + artists */
+.libpanel:not(.on){display:none!important}
+.albumgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.acover{display:block;width:100%;aspect-ratio:1;border-radius:11px;box-shadow:inset 0 0 0 1px rgba(var(--tint),.08)}
+.phero .acover{width:172px;flex:0 0 auto;border-radius:18px}
+.artistgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.artistcard{text-align:center}
+.artistcard .acover{border-radius:50%}
+.avatarhero{width:172px;aspect-ratio:1;flex:0 0 auto;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(var(--tint),.1)}
+.secthead{margin:6px 0 12px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.tno{font-size:12px;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+.albumrail{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-bottom:26px}
+
+/* "Local" status light: a slow breathing blink, like a standby LED */
+.local::before{animation:local-blink 2.4s ease-in-out infinite}
+@keyframes local-blink{0%,100%{opacity:1}50%{opacity:.25;box-shadow:0 0 2px rgba(var(--accent-rgb),.4)}}
+@media(prefers-reduced-motion:reduce){.local::before{animation:none}}
+
+/* metadata editor states */
+.coverbtns{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.covernote{font-size:11px;color:var(--muted)}
+.ferr{margin:5px 0 0;font-size:11px;color:var(--err);display:none}
+.field.bad input{border-color:var(--err)}
+.field.bad .ferr{display:block}
+.field input:disabled{opacity:.55;cursor:not-allowed}
+.btn:disabled,.btn:disabled:hover{opacity:.45;cursor:not-allowed}
+.metanotice{display:none;margin:4px 0 12px;padding:12px;border-radius:12px;border:1px solid rgba(var(--accent-rgb),.3);background:rgba(var(--accent-rgb),.08);color:var(--text);font-size:12px;line-height:1.5}
+.metanotice.on{display:block}
+.metanotice b{display:block;margin-bottom:2px}
+.metanotice .btn{margin-top:10px}
+.metaerror{display:none;margin:4px 0 12px;padding:10px 12px;border-radius:12px;border:1px solid var(--err);color:var(--err);font-size:12px;line-height:1.5}
+.metaerror.on{display:block}
+.editorstate{position:fixed;top:58px;right:10px;z-index:500;display:flex;flex-wrap:wrap;gap:4px;align-items:center;max-width:430px;justify-content:flex-end;padding:5px 6px 5px 12px;border-radius:18px;border:1px solid var(--line);background:rgba(var(--glass),.92);backdrop-filter:blur(10px);font-size:11px;color:var(--muted)}
+.editorstate button{border:0;border-radius:999px;padding:5px 9px;background:transparent;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+.editorstate button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.editorstate button:focus-visible{outline:2px solid var(--accent-readable);outline-offset:2px}
+.js-m3u[hidden],.js-bundle[hidden]{display:none!important}
+.plcover{display:flex;align-items:center;gap:8px}
+.plcover-art{width:30px;height:30px;border-radius:8px;flex:0 0 auto}
+[data-istage] .linkbtn{margin-top:2px}
+.discard{position:absolute;inset:0;z-index:30;display:grid;place-items:center;background:rgba(var(--scrim),calc(.72*var(--scrim-k)));border-radius:inherit}
+.discard[hidden]{display:none}
+.discard-card{width:min(300px,86%);padding:18px;border-radius:18px;border:1px solid var(--line);background:var(--panel2);box-shadow:0 20px 50px rgba(0,0,0,calc(.5*var(--shade-k)))}
+.discard-card h3{margin:0 0 6px;font-size:16px}
+.discard-card p{margin:0 0 16px;color:var(--muted);font-size:12px;line-height:1.5}
+.lyrics-card,[data-screen="lyrics"]{position:relative}
+.lyricsstate{position:fixed;top:132px;right:10px;z-index:500;display:flex;flex-wrap:wrap;gap:4px;align-items:center;max-width:430px;justify-content:flex-end;padding:5px 6px 5px 12px;border-radius:18px;border:1px solid var(--line);background:rgba(var(--glass),.92);backdrop-filter:blur(10px);font-size:11px;color:var(--muted)}
+.lyricsstate button{border:0;border-radius:999px;padding:5px 9px;background:transparent;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+.lyricsstate button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+/* lyrics with no timestamps (e.g. from the song file): plain text from the top, scrollable */
+.lyrics.unsynced .lyricwin{overflow-y:auto;-webkit-mask-image:none;mask-image:none}
+.lyrics.unsynced .lyriclist{position:static;transform:none!important}
+.lyrics.unsynced .lyriclist li{opacity:.9;color:var(--text);font-weight:400;cursor:default}
+</style>
+</head>
+<body>
+<div class="themepreview" role="group" aria-label="Preview theme"><span>Theme</span><button data-theme="System" aria-pressed="false">System</button><button data-theme="Dark" aria-pressed="false">Dark</button><button data-theme="Light" aria-pressed="false">Light</button></div>
+<div class="editorstate" role="group" aria-label="Preview editor states"><span>Editor</span><button data-state="normal" aria-pressed="false">Normal</button><button data-state="readonly" aria-pressed="false">Read-only</button><button data-state="invalid" aria-pressed="false">Invalid</button><button data-state="failed" aria-pressed="false">Save failed</button><button data-state="saving" aria-pressed="false">Saving</button></div>
+<div class="lyricsstate" role="group" aria-label="Preview lyrics editor states"><span>Lyrics editor</span><button data-lstate="normal" aria-pressed="false">Normal</button><button data-lstate="readonly" aria-pressed="false">Read-only</button><button data-lstate="failed" aria-pressed="false">Save failed</button><button data-lstate="saving" aria-pressed="false">Saving</button><button data-lstate="discard" aria-pressed="false">Discard?</button></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 4h3v16H5zM11 4h3v16h-3z"/><path d="m17.5 5 2.8 14"/></symbol>
+  <symbol id="i-playlist" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h12M4 12h12M4 18h7"/><path d="m17 14 4 2-4 2z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.2"/><circle cx="15" cy="17" r="2.2"/></symbol>
+  <symbol id="i-queue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 12h11M4 18h11"/><path d="m18 15 3 2-3 2z"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5h2v14H6z"/><path fill="currentColor" d="M20 5v14L9 12z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M16 5h2v14h-2z"/><path fill="currentColor" d="M4 5v14l11-7z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="m4 4 5 5"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/><path d="m14 7 3 3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-lyrics" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 10h11M4 14h6"/><circle cx="16.5" cy="17.5" r="2.5"/><path d="M19 17.5V8l2-1"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 12h1M7 8v8M11 4v16M15 8v8M19 11v2"/></symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="13" r="7"/><path d="M12 13V9.5M10 3h4"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5.5 5h13l1.5 8v6H4v-6z"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+</svg>
+
+<button class="firstrunbtn" id="firstRunBtn">▶ First run</button>
+<button class="firstrunbtn mutebtn" id="muteBtn" aria-pressed="false" title="Stands in for muting the system volume">🔇 Mute system</button>
+<button class="firstrunbtn sysaccentbtn" id="sysAccentBtn" title="Stands in for changing the desktop's accent color">🎨 System accent: Blue</button>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="brandrow">
+      <span class="brandmark" aria-hidden="true"></span>
+      <span><span class="brandname">Record Player</span><span class="brandsub">Desktop player</span></span>
+    </div>
+    <nav class="nav" aria-label="Primary">
+      <button class="navitem on" data-view="home"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-home"/></svg>Home</button>
+      <button class="navitem" data-view="library"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-library"/></svg>Library</button>
+      <button class="navitem" data-view="playlists"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-playlist"/></svg>Playlists</button>
+      <button class="navitem" data-view="inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-inbox"/></svg>Inbox<span class="navbadge" id="inboxBadge" hidden>0%</span></button>
+      <button class="navitem" data-view="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-settings"/></svg>Settings</button>
+    </nav>
+    <div class="sideblock">
+      <div class="side-label">Your playlists</div>
+      <button class="sideplaylist" data-playlist="Road Trip"><span class="sp-art" style="background:linear-gradient(135deg,#e0a458,#6d3b1e)"></span><span class="sp-name">Road Trip</span><span class="sp-count">12</span></button>
+      <button class="sideplaylist" data-playlist="Favorites"><span class="sp-art" style="background:linear-gradient(135deg,#7fb7a3,#254e43)"></span><span class="sp-name">Favorites</span><span class="sp-count">34</span></button>
+      <button class="sideplaylist" data-playlist="Chill"><span class="sp-art" style="background:linear-gradient(135deg,#9a8cff,#3a288f)"></span><span class="sp-name">Chill</span><span class="sp-count">8</span></button>
+      <button class="sideplaylist" data-playlist="Late Night"><span class="sp-art" style="background:linear-gradient(135deg,#e8836a,#6d2e28)"></span><span class="sp-name">Late Night</span><span class="sp-count">19</span></button>
+    </div>
+    <div class="sidefoot">
+      <span class="local">Local library</span>
+      <span>4 tracks · FLAC</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="view home-view on" data-view="home">
+      <header class="viewhead">
+        <div><p class="eyebrow">Now spinning</p><h1>Home</h1></div>
+        <div class="headmeta"><span class="pill">Local · 4 tracks</span><span class="pill">Offline</span></div>
+      </header>
+      <div class="homegrid">
+        <div class="discspot">
+          <button class="disc" id="discBtn" data-play aria-label="Play">
+            <span class="label js-disc" style="background:linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14)"></span>
+            <span class="hole" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="nowcopy">
+          <p class="eyebrow">Now playing</p>
+          <h2 class="js-title">Midnight Drive</h2>
+          <p class="nowartist js-artist">Neon Coast</p>
+          <p class="nowalbum"><span class="js-album">After Hours</span><span class="sep">·</span><span class="js-year">2024</span></p>
+          <div class="chips">
+            <span class="chip accent js-genre">Synthwave</span>
+            <span class="chip">FLAC</span>
+            <span class="chip">Local file</span>
+          </div>
+          <div class="nowactions">
+            <button class="btn primary" data-play><svg class="playic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg><svg class="pause" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-pause"/></svg><span class="playlabel">Play</span></button>
+            <button class="btn" id="editMeta"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-edit"/></svg>Edit metadata</button>
+            <button class="btn" id="lyricsToggle" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lyrics"/></svg>Lyrics</button>
+          </div>
+          <p class="micro">Click the disc to play or pause</p>
+          <div class="lyrics" id="lyricsPanel">
+            <div class="lyrichead"><span id="lyricSource">Lyrics · synced</span><button class="linkbtn" data-lyrics-edit>✎ Edit lyrics</button></div>
+            <div class="lyricwin" id="lyricWin"><ol class="lyriclist" id="lyricList"></ol></div>
+            <div class="lyricempty"><span>No lyrics for this song yet</span><button class="linkbtn" data-lyrics-edit>Write lyrics</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="library">
+      <header class="viewhead">
+        <div><p class="eyebrow">Collection</p><h1>Library</h1></div>
+        <div class="headmeta"><span class="pill">4 tracks</span><button class="btn" id="playAll"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>Play all</button></div>
+      </header>
+      <div class="library-bar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="search" type="search" placeholder="Search songs, albums, artists">
+        </div>
+        <div class="tabs" role="tablist" aria-label="Library sections">
+          <button class="tab on" role="tab" aria-selected="true">Songs</button>
+          <button class="tab" role="tab" aria-selected="false">Albums</button>
+          <button class="tab" role="tab" aria-selected="false">Artists</button>
+        </div>
+      </div>
+      <div class="libpanel on" data-panel="Songs">
+        <div class="songhead"><span></span><span>Title</span><span>Album</span><span>Time</span><span></span></div>
+        <div class="songlist" id="songs"></div>
+        <div class="empty" id="empty">No matching tracks.</div>
+      </div>
+      <div class="libpanel" data-panel="Albums"><div class="albumgrid" id="albumGrid"></div></div>
+      <div class="libpanel" data-panel="Artists"><div class="artistgrid" id="artistGrid"></div></div>
+    </section>
+
+    <section class="view" data-view="album">
+      <header class="viewhead">
+        <div class="phead">
+          <button class="iconbtn" data-libback aria-label="Back to library">←</button>
+          <div><p class="eyebrow">Album</p><h1 id="alName">After Hours</h1></div>
+        </div>
+      </header>
+      <div class="phero">
+        <span class="acover phcover" id="alCover"></span>
+        <div class="phinfo">
+          <p class="nowartist" id="alArtist" style="margin:0 0 4px">Neon Coast</p>
+          <p class="phsub" id="alSub">2024 · 4 songs · 16 min</p>
+          <div class="nowactions">
+            <button class="btn primary" id="alPlay"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>Play</button>
+            <button class="btn" id="alShuffle"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle</button>
+          </div>
+        </div>
+      </div>
+      <div class="songhead"><span>#</span><span>Title</span><span></span><span>Time</span><span></span></div>
+      <div class="songlist" id="alSongs"></div>
+    </section>
+
+    <section class="view" data-view="artist">
+      <header class="viewhead">
+        <div class="phead">
+          <button class="iconbtn" data-libback aria-label="Back to library">←</button>
+          <div><p class="eyebrow">Artist</p><h1 id="arName">Neon Coast</h1></div>
+        </div>
+      </header>
+      <div class="phero">
+        <span class="avatarhero" id="arAvatar"></span>
+        <div class="phinfo">
+          <p class="phsub" id="arSub">2 albums · 7 songs</p>
+          <div class="nowactions">
+            <button class="btn primary" id="arPlay"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>Play all</button>
+            <button class="btn" id="arShuffle"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle</button>
+          </div>
+        </div>
+      </div>
+      <div class="secthead">Albums</div>
+      <div class="albumrail" id="arAlbums"></div>
+      <div class="secthead">Songs</div>
+      <div class="songhead"><span></span><span>Title</span><span>Album</span><span>Time</span><span></span></div>
+      <div class="songlist" id="arSongs"></div>
+    </section>
+
+    <!-- SONG DETAILS: a song that isn't the one playing -->
+    <section class="view" data-view="details">
+      <header class="viewhead">
+        <div class="phead">
+          <button class="iconbtn" id="detailsBack" aria-label="Back">←</button>
+          <div><p class="eyebrow">Song details</p><h1 id="dtHeading">Paper Lanterns</h1></div>
+        </div>
+      </header>
+      <div class="dtgrid">
+        <div class="dtsleeve" aria-hidden="true">
+          <span class="dtvinyl"><span class="dtlabel" id="dtLabel"></span><span class="hole"></span></span>
+          <span class="dtcover" id="dtCover"></span>
+        </div>
+        <div class="dtinfo">
+          <p class="nowartist" id="dtArtist">Mira Vale</p>
+          <p class="nowalbum" id="dtAlbum">Slow Light</p>
+          <dl class="dtfacts">
+            <div><dt>Year</dt><dd id="dtYear">2023</dd></div>
+            <div><dt>Genre</dt><dd id="dtGenre">Indie</dd></div>
+            <div><dt>Track</dt><dd id="dtTrack">1</dd></div>
+            <div><dt>Length</dt><dd id="dtLength">4:05</dd></div>
+          </dl>
+          <div class="nowactions">
+            <button class="btn primary" id="dtPlay"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>Play</button>
+            <button class="btn" id="dtAdd"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg>Add to playlist</button>
+            <button class="iconbtn" id="detailsMore" aria-label="More options">⋮</button>
+          </div>
+          <p class="note" id="dtNote">Not playing. <b>Midnight Drive</b> keeps playing until you press Play.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="playlists">
+      <header class="viewhead">
+        <div><p class="eyebrow">Collection</p><h1>Playlists</h1></div>
+        <div class="headmeta"><span class="pill" id="playlistCount">4 playlists</span><button class="btn" data-modal="importModal"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-import"/></svg>Import</button><button class="btn primary" id="addPl"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg>New playlist</button></div>
+      </header>
+      <div class="playgrid" id="plist">
+        <button class="playcard" data-playlist="Road Trip">
+          <span class="pcover" style="background:linear-gradient(135deg,#e0a458,#6d3b1e)"></span>
+          <span class="pcname">Road Trip</span><span class="pcsub">12 songs · 48 min</span>
+        </button>
+        <button class="playcard" data-playlist="Favorites">
+          <span class="pcover" style="background:linear-gradient(135deg,#7fb7a3,#254e43)"></span>
+          <span class="pcname">Favorites</span><span class="pcsub">34 songs · 2 hr 14 min</span>
+        </button>
+        <button class="playcard" data-playlist="Chill">
+          <span class="pcover" style="background:linear-gradient(135deg,#9a8cff,#3a288f)"></span>
+          <span class="pcname">Chill</span><span class="pcsub">8 songs · 32 min</span>
+        </button>
+        <button class="playcard" data-playlist="Late Night">
+          <span class="pcover" style="background:linear-gradient(135deg,#e8836a,#6d2e28)"></span>
+          <span class="pcname">Late Night</span><span class="pcsub">19 songs · 1 hr 8 min</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="view" data-view="playlist">
+      <header class="viewhead">
+        <div class="phead">
+          <button class="iconbtn" id="plBack" aria-label="Back to playlists">←</button>
+          <div><p class="eyebrow">Playlist</p><h1 id="plName">Road Trip</h1></div>
+          <button class="iconbtn playlist-options" data-modal="playlistOptionsModal" aria-label="Playlist options">⋮</button>
+        </div>
+        <div class="headmeta"><span class="pill">Stored on this device</span></div>
+      </header>
+      <div class="phero">
+        <span class="pcover phcover" id="plCover"></span>
+        <div class="phinfo">
+          <p class="phsub" id="plSub">12 songs · 48 min</p>
+          <p class="plcovernote" id="plCoverNote">Cover · first song</p>
+          <div class="nowactions">
+            <button class="btn primary" id="plPlay"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>Play</button>
+            <button class="btn" id="plShuffle"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle Play</button>
+            <button class="btn" data-modal="exportModal"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-export"/></svg>Export</button>
+            <button class="btn" data-modal="convertModal"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-wave"/></svg>Convert to Audio</button>
+          </div>
+        </div>
+      </div>
+      <p class="note">Hold a song, then drag it to reorder. Use ⋮ for song options.</p>
+      <div class="songhead"><span></span><span>Title</span><span>Album</span><span>Time</span><span></span></div>
+      <div class="songlist" id="plSongs"></div>
+    </section>
+
+    <!-- INBOX: background tasks (conversions) -->
+    <section class="view" data-view="inbox">
+      <header class="viewhead">
+        <div><p class="eyebrow">Background tasks</p><h1>Inbox</h1></div>
+      </header>
+      <p class="inbox-note">Tasks stay here while they run if you close their progress window.</p>
+    <article class="inbox-task" id="inboxConvertTask" hidden>
+      <div class="inbox-task-head">
+        <span class="inbox-task-icon">♫</span>
+        <span class="inbox-task-copy"><strong id="inboxConvertTitle">Converting “Road Trip”</strong><small id="inboxConvertSub">FLAC · Road Trip.flac</small></span>
+        <span class="inbox-task-percent" id="inboxConvertPercent">0%</span>
+      </div>
+      <p class="inbox-task-stage" id="inboxConvertStage">Song 1 of 12 · Midnight Drive</p>
+      <div class="export-progress-bar" role="progressbar" aria-label="Conversion progress"><div class="export-progress-fill" id="inboxConvertFill"></div></div>
+      <div class="inbox-task-meta"><span>Saving to ~/Music/Exports</span><span id="inboxConvertState">In progress</span></div>
+      <div class="inbox-task-actions">
+        <button class="btn" id="reopenConvertProgress">Open progress</button>
+        <button class="btn" id="cancelConvertFromInbox">Cancel</button>
+        <button class="btn" id="dismissConvertTask" hidden>Dismiss</button>
+      </div>
+    </article>
+      <div class="inbox-empty" id="inboxEmpty">No background tasks yet.</div>
+    </section>
+
+    <section class="view" data-view="settings">
+      <header class="viewhead">
+        <div><p class="eyebrow">Preferences</p><h1>Settings</h1></div>
+        <div class="headmeta"><span class="pill">Stored locally</span></div>
+      </header>
+      <div class="settings-grid">
+        <section class="panelcard">
+          <h3>Appearance</h3>
+          <div class="row"><span class="rlabel">Theme</span><select class="select" aria-label="Theme"><option>System</option><option>Dark</option><option>Light</option></select></div>
+          <div class="row">
+            <span class="rtext"><span class="rlabel">Accent color</span><span class="rsub" id="accentName">Gold</span></span>
+            <div class="swatches" role="group" aria-label="Accent color">
+              <button class="swatch" data-accent="Gold" data-hex="#e0a458" data-rgb="224,164,88" style="background:#e0a458" aria-label="Gold accent" aria-pressed="true"></button>
+              <button class="swatch" data-accent="Coral" data-hex="#e8836a" data-rgb="232,131,106" style="background:#e8836a" aria-label="Coral accent" aria-pressed="false"></button>
+              <button class="swatch" data-accent="Mint" data-hex="#7fd1b9" data-rgb="127,209,185" style="background:#7fd1b9" aria-label="Mint accent" aria-pressed="false"></button>
+              <button class="swatch" data-accent="Sky" data-hex="#7fb8e8" data-rgb="127,184,232" style="background:#7fb8e8" aria-label="Sky accent" aria-pressed="false"></button>
+              <button class="swatch" data-accent="Lavender" data-hex="#b39ddb" data-rgb="179,157,219" style="background:#b39ddb" aria-label="Lavender accent" aria-pressed="false"></button>
+              <button class="swatch" data-accent="Rose" data-hex="#e79ab5" data-rgb="231,154,181" style="background:#e79ab5" aria-label="Rose accent" aria-pressed="false"></button>
+              <button class="swatch custom" id="customSwatch" style="--custom-accent:#e0a458" aria-label="Custom accent color" aria-haspopup="dialog" aria-pressed="false" title="Custom accent color"></button>
+            </div>
+          </div>
+          <div class="row"><span class="rtext"><span class="rlabel">Use system accent</span><span class="rsub" id="sysAccentSub">Follows your desktop's accent color</span></span><button class="switch" id="dynamicColor" aria-pressed="false" aria-label="Use system accent"></button></div>
+        </section>
+        <section class="panelcard">
+          <h3>Playback</h3>
+          <div class="row"><span class="rlabel">Resume on start</span><button class="switch" aria-pressed="true" aria-label="Resume on start"></button></div>
+          <div class="row"><span class="rlabel">Pause on headphone unplug</span><button class="switch" aria-pressed="true" aria-label="Pause on headphone unplug"></button></div>
+          <div class="row"><span class="rtext"><span class="rlabel">Pause when muted</span><span class="rsub">System mute, or the volume slider at 0</span></span><button class="switch" id="pauseOnMute" aria-pressed="true" aria-label="Pause when muted"></button></div>
+          <div class="row"><span class="rtext"><span class="rlabel">Resume when unmuted</span><span class="rsub">Only if muting paused it</span></span><button class="switch" id="resumeOnUnmute" aria-pressed="false" aria-label="Resume when unmuted"></button></div>
+          <div class="row"><span class="rlabel">Gapless playback</span><button class="switch" aria-pressed="true" aria-label="Gapless playback"></button></div>
+        </section>
+        <section class="panelcard">
+          <h3>Library</h3>
+          <div class="row"><span class="rlabel">Music folder</span><button class="select">Change</button></div>
+          <div class="row"><span class="rlabel">Rescan library</span><button class="select">Rescan</button></div>
+          <div class="row"><span class="rtext"><span class="rlabel">Watch for changes</span><span class="rsub">Add new files automatically</span></span><button class="switch" aria-pressed="true" aria-label="Watch for changes"></button></div>
+        </section>
+        <section class="panelcard">
+          <h3>About</h3>
+          <div class="row"><span class="rlabel">Record Player Desktop</span><span class="rsub">0.1.0</span></div>
+          <div class="row"><span class="rlabel">Library format</span><span class="rsub">Local · FLAC</span></div>
+          <div class="row"><span class="rtext"><span class="rlabel">Privacy</span><span class="rsub">No account, no telemetry</span></span><span class="chip accent">Offline</span></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <aside class="queue" id="queue" aria-label="Play queue">
+    <div class="qhead"><h2>Up next</h2><span class="qcount" id="queueCount">4 tracks</span></div>
+    <div class="qlist" id="queueList"></div>
+    <div class="details">
+      <div class="dhead">Track details</div>
+      <dl class="dgrid">
+        <dt>Album</dt><dd class="js-dalbum">After Hours</dd>
+        <dt>Year</dt><dd class="js-dyear">2024</dd>
+        <dt>Genre</dt><dd class="js-dgenre">Synthwave</dd>
+        <dt>Source</dt><dd>Local file</dd>
+      </dl>
+    </div>
+  </aside>
+
+  <footer class="dock">
+    <button class="docktrack" data-view="home" aria-label="Open now playing">
+      <span class="dockart js-dockart" style="background:linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14)"></span>
+      <span class="dockmeta"><span class="docktitle js-dtitle">Midnight Drive</span><span class="dockartist js-dartist">Neon Coast</span></span>
+    </button>
+    <div class="dockcenter">
+      <div class="transport">
+        <button class="tbtn" id="shuffle" aria-label="Shuffle" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-shuffle"/></svg></button>
+        <button class="tbtn" aria-label="Previous"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-prev"/></svg></button>
+        <button class="playmain" data-play aria-label="Play"><svg class="playic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg><svg class="pause" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-pause"/></svg></button>
+        <button class="tbtn" aria-label="Next"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-next"/></svg></button>
+        <button class="tbtn" id="repeat" aria-label="Repeat off"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-repeat"/></svg><span class="badge repeatone" aria-hidden="true">1</span></button>
+      </div>
+      <div class="dockseek">
+        <span id="elapsed">0:42</span>
+        <input type="range" id="seek" min="0" max="222" value="42" aria-label="Seek">
+        <span class="js-total">3:42</span>
+      </div>
+    </div>
+    <div class="dockright">
+      <button class="tbtn" id="queueToggle" aria-label="Hide queue" aria-expanded="true" title="Toggle queue"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-queue"/></svg></button>
+      <svg class="volicon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-volume"/></svg>
+      <input class="vol" id="volume" type="range" min="0" max="100" value="72" aria-label="Volume">
+    </div>
+  </footer>
+
+
+  <!-- FIRST RUN -->
+  <section class="firstrun" id="firstRun" aria-label="Welcome">
+    <div class="frbrand">
+      <span class="brandmark" aria-hidden="true"></span>
+      <span><span class="brandname">Record Player</span><span class="brandsub">Desktop player</span></span>
+    </div>
+    <div class="discspot">
+      <div class="disc" aria-hidden="true"><span class="label blank"></span><span class="hole"></span></div>
+    </div>
+
+    <div>
+      <div class="wstep on" data-step="intro">
+        <p class="eyebrow">Welcome</p>
+        <h1>Let's find your music</h1>
+        <p>Record Player plays the music already on this computer, straight from your music folder.</p>
+        <div class="foldercard">
+          <span class="ficon" aria-hidden="true">📁</span>
+          <span class="fmeta"><span class="fpath js-fpath">~/Music</span><span class="fsub js-fsub">Your Music folder, from your desktop settings</span></span>
+          <button class="btn" id="changeFolder">Change…</button>
+        </div>
+        <ul class="wpoints">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>Only this folder (and the folders inside it) is read</li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>No account, no internet, nothing uploaded</li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>Change it anytime in Settings</li>
+        </ul>
+        <div class="wactions"><button class="btn primary" id="scanStart">Scan and start</button></div>
+      </div>
+
+      <div class="wstep" data-step="scan">
+        <p class="eyebrow">Scanning <span class="js-fpath">~/Music</span></p>
+        <h1>Finding your music…</h1>
+        <span class="wcount" id="scanCount">0</span>
+        <p>songs found</p>
+        <span class="wfile" id="scanFile">&nbsp;</span>
+        <div class="wactions"><button class="btn" id="scanCancel">Cancel</button></div>
+      </div>
+
+      <div class="wstep" data-step="done">
+        <p class="eyebrow">Ready</p>
+        <h1>You're all set</h1>
+        <span class="wcount" id="doneCount">342</span>
+        <p>songs · 28 albums · 41 artists in <b class="js-fpath">~/Music</b></p>
+        <div class="wactions"><button class="btn primary" id="startListening">Start listening</button></div>
+      </div>
+
+      <div class="wstep" data-step="empty">
+        <p class="eyebrow">Nothing found</p>
+        <h1>No music in <span class="js-fpath">~/Downloads</span></h1>
+        <p>We looked for MP3, FLAC, M4A, OGG, Opus and WAV files in that folder and the folders inside it.</p>
+        <div class="wactions"><button class="btn primary" id="chooseAgain">Choose another folder</button></div>
+      </div>
+    </div>
+
+    <!-- The system's folder chooser (not part of the app's own design) -->
+    <div class="syschooser" id="sysChooser" role="dialog" aria-label="Choose a folder">
+      <div class="win">
+        <div class="wbar"><span>Choose your music folder</span><small>System dialog</small></div>
+        <div class="wrows">
+          <button class="wrow sel" data-path="~/Music"><span class="fi"></span>~/Music</button>
+          <button class="wrow" data-path="~/Downloads"><span class="fi"></span>~/Downloads</button>
+          <button class="wrow" data-path="~/Documents"><span class="fi"></span>~/Documents</button>
+          <button class="wrow" data-path="/media/usb-drive/Music"><span class="fi"></span>/media/usb-drive/Music</button>
+        </div>
+        <div class="wfoot"><button id="chooserCancel">Cancel</button><button class="go" id="chooserSelect">Select</button></div>
+      </div>
+    </div>
+  </section>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="overlay" id="accentModal" aria-hidden="true">
+    <div class="overlay-card accent-card" id="accentCard" role="dialog" aria-modal="true" aria-labelledby="accentTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Appearance</p><h3 id="accentTitle">Custom accent</h3></div>
+        <button class="iconbtn" id="accentClose" aria-label="Close color picker">✕</button>
+      </div>
+      <div class="svwrap">
+        <canvas id="svCanvas" width="620" height="380" tabindex="0" aria-label="Saturation and brightness"></canvas>
+        <span class="svdot" id="svDot"></span>
+      </div>
+      <input class="hue" id="hueRange" type="range" min="0" max="360" step="1" value="34" aria-label="Hue">
+      <div class="previewrow">
+        <span class="previewdot" id="previewDot"></span>
+        <span>Preview</span>
+        <span class="previewhex" id="previewHex">#E0A458</span>
+      </div>
+      <div class="accent-actions">
+        <button class="btn" id="accentCancel">Cancel</button>
+        <button class="btn primary" id="accentApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="metaModal" aria-hidden="true">
+    <div class="overlay-card meta-card" id="metaCard" role="dialog" aria-modal="true" aria-labelledby="metaTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Track details</p><h3 id="metaTitle">Edit metadata</h3></div>
+        <button class="iconbtn" id="metaClose" aria-label="Close metadata editor">✕</button>
+      </div>
+      <div class="metacover">
+        <span class="mart js-meta" style="background:linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14)"></span>
+        <div class="coverbtns">
+          <button class="btn js-metactl">Choose cover image</button>
+          <button class="btn js-metactl" id="removeCover">Remove cover</button>
+          <span class="covernote" id="coverNote"></span>
+        </div>
+      </div>
+      <div class="metanotice" id="metaNotice"></div>
+      <div class="metaform">
+        <div class="field wide"><label for="mTitle">Title</label><input id="mTitle" value="Midnight Drive"></div>
+        <div class="field"><label for="mArtist">Artist</label><input id="mArtist" value="Neon Coast"></div>
+        <div class="field"><label for="mAlbum">Album</label><input id="mAlbum" value="After Hours"></div>
+        <div class="field wide"><label for="mAlbumArtist">Album artist</label><input id="mAlbumArtist" value="Neon Coast"></div>
+        <div class="frow">
+          <div class="field"><label for="mYear">Year</label><input id="mYear" value="2024" inputmode="numeric"><p class="ferr">Use a 4-digit year</p></div>
+          <div class="field"><label for="mTrack">Track</label><input id="mTrack" value="01" inputmode="numeric"><p class="ferr">Use a number from 1 to 999</p></div>
+        </div>
+        <div class="field wide"><label for="mGenre">Genre</label><input id="mGenre" value="Synthwave"></div>
+        <div class="metaerror" id="metaError" role="alert" style="grid-column:1/-1"></div>
+        <div class="metaactions">
+          <button class="btn" id="metaCancel">Cancel</button>
+          <button class="btn primary" id="metaSave">Save changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="lyricsModal" aria-hidden="true">
+    <div class="overlay-card lyrics-card" id="lyricsCard" role="dialog" aria-modal="true" aria-labelledby="lyricsTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Song details</p><h3 id="lyricsTitle">Edit lyrics</h3></div>
+        <button class="iconbtn" data-modal-close aria-label="Close lyrics editor">✕</button>
+      </div>
+      <div class="lrcfile">
+        <span class="fileicon">.lrc</span>
+        <span class="lrcmeta"><span class="lrcname" id="lrcName">Midnight Drive.lrc</span><span class="rsub">Saved next to the audio file · synced lyrics</span></span>
+      </div>
+      <div class="lyrtools">
+        <div class="seg" id="lyrMode" role="group" aria-label="Editor mode">
+          <button data-value="lines" aria-pressed="true">Timed lines</button>
+          <button data-value="paste" aria-pressed="false">Paste text</button>
+        </div>
+        <div class="ltransport">
+          <button class="tbtn" data-play aria-label="Play"><svg class="playic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg><svg class="pause" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-pause"/></svg></button>
+          <span class="ltime" id="ltime">00:42.00</span>
+          <input type="range" id="lseek" min="0" max="222" value="42" step="0.25" aria-label="Seek">
+          <span class="js-total">3:42</span>
+        </div>
+      </div>
+      <div class="lines" id="lrcLines"></div>
+      <textarea class="lpaste" id="lrcPaste" aria-label="Paste lyrics" placeholder="Paste lyrics here, one line per row"></textarea>
+      <div class="metanotice" id="lyrNotice"></div>
+      <div class="metaerror" id="lyrError" role="alert"></div>
+      <p class="lnote" id="lrcNote"></p>
+      <div class="lyrfoot">
+        <span class="stampgroup">
+          <button class="btn" id="addLine"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg>Add line</button>
+          <button class="btn stamp" id="stampBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-timer"/></svg><span id="stampLabel">Stamp 00:42.00</span></button>
+          <span class="kbd">Ctrl + Enter</span>
+        </span>
+        <span class="spacer"></span>
+        <button class="btn" data-modal-close>Cancel</button>
+        <button class="btn primary" id="saveLyrics">Save lyrics</button>
+      </div>
+      <div class="discard" id="discardDlg" role="alertdialog" aria-modal="true" aria-labelledby="discardTitle" hidden>
+        <div class="discard-card">
+          <h3 id="discardTitle">Discard changes?</h3>
+          <p>Your changes to these lyrics haven't been saved.</p>
+          <div class="modalactions"><button class="btn" id="keepEditing">Keep editing</button><button class="btn primary" id="discardBtn">Discard</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="exportModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="exportTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Export playlist</p><h3 id="exportTitle" class="js-plname">Road Trip</h3></div>
+        <button class="iconbtn" data-modal-close aria-label="Close">✕</button>
+      </div>
+      <div id="exportSettings">
+      <div class="row"><span class="rtext"><span class="rlabel">Format</span><span class="rsub" id="formatHint">Track list most players can open</span></span><div class="seg" id="exportFormat" role="group" aria-label="Format"><button data-value="m3u8" aria-pressed="true">M3U8</button><button data-value="bundle" aria-pressed="false">Record Disc</button></div></div>
+      <div class="row js-m3u">
+        <span class="rtext"><span class="rlabel">File paths</span><span class="rsub" id="pathHint">Portable if files move together</span></span>
+        <div class="seg" id="pathMode" role="group" aria-label="File paths"><button data-value="relative" aria-pressed="true">Relative</button><button data-value="absolute" aria-pressed="false">Full</button></div>
+      </div>
+      <div class="row js-m3u"><span class="rtext"><span class="rlabel">Include track info</span><span class="rsub">Title, artist and length</span></span><button class="switch" aria-pressed="true" aria-label="Include track info"></button></div>
+      <div class="row js-bundle" hidden><span class="rtext"><span class="rlabel">Include lyrics</span><span class="rsub">.lrc files, for songs that have them</span></span><button class="switch" aria-pressed="true" aria-label="Include lyrics"></button></div>
+      <div class="row js-bundle" hidden><span class="rtext"><span class="rlabel">Playlist cover</span><span class="rsub">Shown when the playlist is imported</span></span><span class="plcover"><span class="plcover-art" style="background:linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14)"></span><button class="select" data-picker aria-label="Change playlist cover">Choose…</button></span></div>
+      <div class="stats js-bundle" hidden><span class="stat"><b>4</b>songs</span><span class="stat"><b>10 MB</b>about, file size</span><span class="stat"><b>2</b>with lyrics</span></div>
+      <div class="field"><label for="exportName">File name</label><input id="exportName" value="Road Trip.m3u8"></div>
+      <div class="row"><span class="rtext"><span class="rlabel">Save to</span><span class="rsub">~/Music/Playlists</span></span><button class="select" data-picker>Choose…</button></div>
+      <p class="note" id="exportNote">Exports the track list only. Your audio files stay where they are.</p>
+      </div>
+      <div class="export-progress-panel" id="exportProgressPanel" hidden>
+        <div class="export-progress-head"><strong id="exportProgressStatus">Preparing playlist package</strong><span id="exportProgressPercent">0%</span></div>
+        <div class="export-progress-track" role="progressbar" aria-label="Playlist export progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="exportProgressBar"><div class="export-progress-fill" id="exportProgressFill"></div></div>
+        <div class="export-progress-meta"><span id="exportProgressAmount">0 / 10 MB processed</span><span id="exportProgressPhase">Packaging</span></div>
+        <p class="note">Progress updates while files are packaged and saved. Cancel to stop the export.</p>
+      </div>
+      <div class="modalactions"><button class="btn" id="cancelExportAction">Cancel</button><button class="btn primary" id="doExport">Export</button></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="playlistNameModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="playlistNameTitle" tabindex="-1">
+      <div class="modal-head"><div><p class="eyebrow">Playlists</p><h3 id="playlistNameTitle">New playlist</h3></div><button class="iconbtn" data-modal-close aria-label="Close">✕</button></div>
+      <div class="field"><label for="playlistNameInput">Name</label><input id="playlistNameInput" value="Summer evenings"></div>
+      <div class="modalactions"><button class="btn" data-modal-close>Cancel</button><button class="btn primary" id="savePlaylistName">Create playlist</button></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="playlistOptionsModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-label="Playlist options" tabindex="-1">
+      <div class="modal-head"><div><p class="eyebrow">Playlist</p><h3 class="js-plname">Road Trip</h3></div><button class="iconbtn" data-modal-close aria-label="Close">✕</button></div>
+      <div class="option-list">
+        <button class="option-btn" id="addSongsToPlaylist">Add songs to playlist</button>
+        <button class="option-btn" id="renamePl">Rename</button>
+        <button class="option-btn" id="changePlCover">Change cover</button>
+        <button class="option-btn" id="removePlCover">Remove cover</button>
+        <button class="option-btn danger" id="deletePl">Delete playlist</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="confirmDeleteModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="deletePlaylistTitle" tabindex="-1">
+      <div class="modal-head"><div><p class="eyebrow">Delete playlist</p><h3 id="deletePlaylistTitle">Delete Road Trip?</h3></div><button class="iconbtn" data-modal-close aria-label="Close">✕</button></div>
+      <p class="note">This removes the playlist, not the songs in your library.</p>
+      <div class="modalactions"><button class="btn" data-modal-close>Cancel</button><button class="btn primary" id="confirmDeletePl">Delete playlist</button></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="songOptionsModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="songOptionsTitle" tabindex="-1">
+      <div class="modal-head"><div><p class="eyebrow">Song</p><h3 id="songOptionsTitle">Midnight Drive</h3></div><button class="iconbtn" data-modal-close aria-label="Close">✕</button></div>
+      <div class="option-list">
+        <button class="option-btn" id="songViewDetails">View Details</button>
+        <button class="option-btn" id="songEditLyrics">Edit lyrics</button>
+        <button class="option-btn" id="songEditMetadata">Edit metadata</button>
+        <button class="option-btn" id="addSongToPlaylist">Add to playlist</button>
+        <button class="option-btn" id="songViewLocation">View file location</button>
+        <!-- Only when opened from a song inside a playlist -->
+        <div class="option-sep js-plonly" hidden></div>
+        <button class="option-btn danger js-plonly" id="removeFromPl" hidden>Remove from playlist</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="addToPlaylistModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="addToPlaylistTitle" tabindex="-1">
+      <div class="modal-head"><div><p class="eyebrow">Add song</p><h3 id="addToPlaylistTitle">Add to playlist</h3></div><button class="iconbtn" data-modal-close aria-label="Close">✕</button></div>
+      <p class="note" id="addSongName">Midnight Drive · Neon Coast</p>
+      <div class="choice-list" id="addPlaylistChoices"></div>
+      <button class="option-btn" id="newPlaylistFromPicker">+ New playlist</button>
+      <p class="note" id="addPlaylistFeedback" aria-live="polite">Already in a playlist? It won't be added twice.</p>
+    </div>
+  </div>
+
+
+  <div class="overlay" id="importModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="importTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Playlists</p><h3 id="importTitle">Import playlist</h3></div>
+        <button class="iconbtn" data-modal-close aria-label="Close">✕</button>
+      </div>
+      <div data-istage="pick">
+        <div class="droparea">
+          <span class="fileicon">.m3u8</span>
+          <span>Drop an .m3u8 playlist or a Record Disc .rdplaylist file here.<br>Track lists are matched against your library; .rdplaylist files bring their songs along.</span>
+          <button class="btn primary" id="pickPl">Choose file…</button>
+          <button class="linkbtn" id="pickBundle">Preview: a .rdplaylist file</button>
+        </div>
+      </div>
+      <div data-istage="review" hidden>
+        <div class="lrcfile"><span class="fileicon">.m3u8</span><span class="lrcmeta"><span class="lrcname">Summer 2025.m3u8</span><span class="rsub">14 entries · ~/Downloads</span></span></div>
+        <div class="stats"><span class="stat"><b>12</b>matched</span><span class="stat warnstat"><b>2</b>not found</span></div>
+        <ul class="missing"><li>Night Swim — Harbor Lights</li><li>Glass Coast — Ode Club</li></ul>
+        <p class="note">Missing tracks are skipped. Import again after adding them to your music folder.</p>
+        <div class="field"><label for="importName">Playlist name</label><input id="importName" value="Summer 2025"></div>
+        <div class="modalactions"><button class="btn" data-modal-close>Cancel</button><button class="btn primary" id="doImport">Import 12 songs</button></div>
+      </div>
+      <div data-istage="bundle" hidden>
+        <div class="lrcfile"><span class="fileicon">.rdp</span><span class="lrcmeta"><span class="lrcname">Road Trip.rdplaylist</span><span class="rsub">4 songs · 10 MB · with lyrics and cover</span></span></div>
+        <div class="stats"><span class="stat"><b>3</b>new songs</span><span class="stat"><b>1</b>already in library</span></div>
+        <p class="note">New songs are copied into ~/Music/Imported/Road Trip/. Songs you already have aren't copied again.</p>
+        <div class="field"><label for="importBundleName">Playlist name</label><input id="importBundleName" value="Road Trip"></div>
+        <div class="modalactions"><button class="btn" data-modal-close>Cancel</button><button class="btn primary" id="doImportBundle">Import 4 songs</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="convertModal" aria-hidden="true">
+    <div class="overlay-card form-card" role="dialog" aria-modal="true" aria-labelledby="convertTitle" tabindex="-1">
+      <div class="modal-head">
+        <div><p class="eyebrow">Convert to Audio</p><h3 id="convertTitle" class="js-plname">Road Trip</h3></div>
+        <button class="iconbtn" data-modal-close aria-label="Close">✕</button>
+      </div>
+      <div data-cstage="setup">
+        <p class="rsub js-plsub">12 songs · 48 min</p>
+        <div class="field"><label for="cvFormat">Format</label>
+          <select id="cvFormat">
+            <option value="flac">FLAC · lossless</option>
+            <option value="mp3">MP3 · 320 kbps</option>
+            <!-- Greyed out as "M4A · needs gstreamer1.0-libav" when GStreamer's libav plugin isn't installed. -->
+            <option value="m4a">M4A · AAC 256 kbps</option>
+            <option value="ogg">OGG Vorbis · q6</option>
+            <option value="opus">Opus · 160 kbps</option>
+            <option value="wav">WAV · uncompressed</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="rlabel">Gap between songs</span>
+          <div class="stepper" id="cvGap" role="group" aria-label="Gap between songs in seconds"><button type="button" id="cvGapLess" aria-label="Shorter gap" disabled>−</button><input id="cvGapInput" type="number" inputmode="numeric" min="0" step="1" value="0" aria-label="Gap between songs, seconds"><span class="unit">s</span><button type="button" id="cvGapMore" aria-label="Longer gap">+</button></div>
+        </div>
+        <div class="row"><span class="rtext"><span class="rlabel">Even out volume</span><span class="rsub">Match loudness · takes about twice as long</span></span><button class="switch" aria-pressed="false" aria-label="Even out volume"></button></div>
+        <div class="field"><label for="cvName">File name</label><input id="cvName" value="Road Trip.flac"></div>
+        <div class="row"><span class="rtext"><span class="rlabel">Save to</span><span class="rsub">~/Music/Exports</span></span><button class="select" data-picker>Choose…</button></div>
+        <p class="note" id="cvMarks">Song starts are marked (cue sheet), so players that support it can skip between songs.</p>
+        <p class="note"><span id="cvEstimate">≈ 312 MB · 48 min</span> · Converted on this computer. Nothing is uploaded.</p>
+        <div class="modalactions"><button class="btn" data-modal-close>Cancel</button><button class="btn primary" id="doConvert">Convert</button></div>
+      </div>
+      <div data-cstage="progress" hidden>
+        <div class="cvstat"><span><span id="cvStep">Song 1 of 12</span><b id="cvTrack">Midnight Drive</b></span><span class="cvpct" id="cvPct">0%</span></div>
+        <div class="progress"><span id="cvBar"></span></div>
+        <p class="note">You can close this: converting carries on in the background and waits in the Inbox until it's done.</p>
+        <div class="modalactions"><button class="btn" id="cancelConvert">Cancel conversion</button></div>
+      </div>
+      <div data-cstage="done" hidden>
+        <div class="done"><span class="donemark"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg></span><b id="cvDoneName">Road Trip.flac</b><span class="rsub">Saved to ~/Music/Exports</span></div>
+        <div class="modalactions"><button class="btn primary" data-modal-close>Done</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const tracks = [
+  { title: "Midnight Drive", artist: "Neon Coast", album: "After Hours", year: "2024", genre: "Synthwave", duration: "3:42", art: "linear-gradient(135deg,#e0a458,#8a4b2a 55%,#2b1a14)" },
+  { title: "Paper Lanterns", artist: "Mira Vale", album: "Slow Light", year: "2023", genre: "Indie", duration: "4:05", art: "linear-gradient(135deg,#7fb7a3,#2d5a4f 55%,#122622)" },
+  { title: "Static Bloom", artist: "The Quiet Hours", album: "Signal", year: "2025", genre: "Electronic", duration: "2:58", art: "linear-gradient(135deg,#9a8cff,#4530a8 55%,#1b1240)" },
+  { title: "Copper Sky", artist: "Lumen Field", album: "Northbound", year: "2022", genre: "Folk", duration: "5:12", art: "linear-gradient(135deg,#ff9f6e,#b3402b 55%,#3a130d)" }
+];
+
+let current = 0;
+let playing = false;
+let pausedByMute = false; // true only while a mute is what paused playback
+let pos = 0;
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const app = $("#app");
+const seek = $("#seek");
+const elapsed = $("#elapsed");
+const metaModal = $("#metaModal");
+const accentModal = $("#accentModal");
+
+const fmt = (total) => Math.floor(total / 60) + ":" + String(Math.floor(total % 60)).padStart(2, "0");
+const secs = (value) => {
+  const parts = value.split(":").map(Number);
+  return parts[0] * 60 + parts[1];
+};
+
+function fillMeta(track) {
+  $("#mTitle").value = track.title;
+  $("#mArtist").value = track.artist;
+  $("#mAlbum").value = track.album;
+  $("#mYear").value = track.year;
+  $("#mTrack").value = String(track.track ?? 1);
+  $("#mAlbumArtist").value = track.albumArtist ?? track.artist;
+  $("#mGenre").value = track.genre;
+}
+
+function renderSongs() {
+  const list = $("#songs");
+  list.innerHTML = "";
+  tracks.forEach((track, index) => {
+    const row = document.createElement("div");
+    row.className = "songrow";
+    row.dataset.index = String(index);
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.innerHTML = '<span class="sart"></span><span class="songmain"><span class="stitle"></span><span class="ssub"></span></span><span class="salbum"></span><span class="stime"></span><button class="smore" aria-label="More options">⋮</button>';
+    row.querySelector(".sart").style.background = track.art;
+    row.querySelector(".stitle").textContent = track.title;
+    row.querySelector(".ssub").textContent = track.artist;
+    row.querySelector(".salbum").textContent = track.album;
+    row.querySelector(".stime").textContent = track.duration;
+    row.addEventListener("click", (event) => {
+      if (event.target.closest(".smore")) return; // the shared song menu opens instead
+      select(index, { start: true });
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.target.closest(".smore")) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        select(index, { start: true });
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+function renderQueue() {
+  const list = $("#queueList");
+  list.innerHTML = "";
+  tracks.forEach((track, index) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "qrow" + (index === current ? " current" : "");
+    row.dataset.index = String(index);
+    row.setAttribute("aria-label", "Play " + track.title);
+    if (index === current) row.setAttribute("aria-current", "true");
+    row.innerHTML = '<span class="qart"></span><span class="qmeta"><span class="qtitle"></span><span class="qsub"></span></span><span class="qtime"></span>';
+    row.querySelector(".qart").style.background = track.art;
+    row.querySelector(".qtitle").textContent = track.title;
+    row.querySelector(".qsub").textContent = track.artist + " · " + track.album;
+    row.querySelector(".qtime").textContent = track.duration;
+    row.addEventListener("click", () => select(index, { start: true }));
+    list.appendChild(row);
+  });
+}
+
+function select(index, { start = false } = {}) {
+  current = index;
+  const track = tracks[index];
+  $$(".js-title").forEach((el) => (el.textContent = track.title));
+  $$(".js-artist").forEach((el) => (el.textContent = track.artist));
+  $$(".js-album").forEach((el) => (el.textContent = track.album));
+  $$(".js-year").forEach((el) => (el.textContent = track.year));
+  $$(".js-genre").forEach((el) => (el.textContent = track.genre));
+  $$(".js-dalbum").forEach((el) => (el.textContent = track.album));
+  $$(".js-dyear").forEach((el) => (el.textContent = track.year));
+  $$(".js-dgenre").forEach((el) => (el.textContent = track.genre));
+  $$(".js-dtitle").forEach((el) => (el.textContent = track.title));
+  $$(".js-dartist").forEach((el) => (el.textContent = track.artist));
+  $$(".js-disc").forEach((el) => (el.style.background = track.art));
+  $$(".js-dockart").forEach((el) => (el.style.background = track.art));
+  $$(".js-meta").forEach((el) => (el.style.background = track.art));
+  $$(".js-total").forEach((el) => (el.textContent = track.duration));
+  $$("#songs .songrow").forEach((row, i) => row.classList.toggle("current", i === index));
+  seek.max = secs(track.duration);
+  $("#lseek").max = seek.max;
+  $("#queueCount").textContent = tracks.length + " tracks";
+  fillMeta(track);
+  renderQueue();
+  renderLyrics();
+  setPos(0);
+  if (start) setPlaying(true);
+}
+
+let detailsReturn = "library"; // where Song details goes back to
+
+function show(view) {
+  const navFor = (v) => (v === "playlist" ? "playlists" : v === "album" || v === "artist" ? "library" : v);
+  const nav = view === "details" ? navFor(detailsReturn) : navFor(view);
+  $$(".view").forEach((panel) => panel.classList.toggle("on", panel.dataset.view === view));
+  $$(".navitem").forEach((item) => item.classList.toggle("on", item.dataset.view === nav));
+}
+
+function setPlaying(next) {
+  pausedByMute = false; // any play/pause clears it; the mute handler sets it again
+  playing = next;
+  document.body.classList.toggle("playing", playing);
+  $$(".playlabel").forEach((el) => (el.textContent = playing ? "Pause" : "Play"));
+  $$("[data-play]").forEach((button) => button.setAttribute("aria-label", playing ? "Pause" : "Play"));
+}
+
+function toast(message) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.add("on");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove("on"), 1700);
+}
+
+$$("[data-view]:not(.view)").forEach((el) => el.addEventListener("click", () => show(el.dataset.view)));
+$$("[data-play]").forEach((el) => el.addEventListener("click", () => setPlaying(!playing)));
+
+$("#shuffle").addEventListener("click", () => {
+  const button = $("#shuffle");
+  const next = button.getAttribute("aria-pressed") !== "true";
+  button.setAttribute("aria-pressed", String(next));
+  button.classList.toggle("active", next);
+});
+
+let repeatState = 0;
+$("#repeat").addEventListener("click", () => {
+  repeatState = (repeatState + 1) % 3;
+  const button = $("#repeat");
+  button.classList.toggle("active", repeatState !== 0);
+  button.classList.toggle("one", repeatState === 1);
+  button.setAttribute("aria-label", repeatState === 0 ? "Repeat off" : repeatState === 1 ? "Repeat one" : "Repeat all");
+});
+
+seek.addEventListener("input", () => setPos(Number(seek.value)));
+
+$("#search").addEventListener("input", () => {
+  const query = $("#search").value.trim().toLowerCase();
+  let shown = 0;
+  $$("#songs .songrow").forEach((row) => {
+    const match = row.textContent.toLowerCase().includes(query);
+    row.style.display = match ? "" : "none";
+    if (match) shown += 1;
+  });
+  $("#empty").style.display = shown ? "none" : "block";
+});
+
+$$(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    $$(".tab").forEach((item) => {
+      item.classList.remove("on");
+      item.setAttribute("aria-selected", "false");
+    });
+    tab.classList.add("on");
+    tab.setAttribute("aria-selected", "true");
+    $$('.view[data-view="library"] .libpanel').forEach((p) => p.classList.toggle("on", p.dataset.panel === tab.textContent.trim()));
+  });
+});
+
+// Albums and artists (sample data; two extra albums so artists can have more than one).
+const albums = [
+  { name: "After Hours", artist: "Neon Coast", year: "2024", art: tracks[0].art, songs: [["Midnight Drive", "3:42"], ["Rearview", "4:10"], ["Neon Rain", "3:28"], ["Slow Exit", "5:01"]] },
+  { name: "Night Swim", artist: "Neon Coast", year: "2021", art: "linear-gradient(135deg,#6fb3e0,#24506e 55%,#0e1e2a)", songs: [["Undertow", "3:55"], ["Glass Pool", "4:20"], ["Afterglow", "3:12"]] },
+  { name: "Slow Light", artist: "Mira Vale", year: "2023", art: tracks[1].art, songs: [["Paper Lanterns", "4:05"], ["Window Seat", "3:33"], ["Low Tide", "4:48"]] },
+  { name: "Signal", artist: "The Quiet Hours", year: "2025", art: tracks[2].art, songs: [["Static Bloom", "2:58"], ["Carrier", "3:40"], ["Interference", "4:02"], ["Hum", "2:31"]] },
+  { name: "Northbound", artist: "Lumen Field", year: "2022", art: tracks[3].art, songs: [["Copper Sky", "5:12"], ["Pines", "4:15"], ["Last Ferry", "3:58"]] },
+  { name: "Paper Moons", artist: "Lumen Field", year: "2019", art: "linear-gradient(135deg,#f2c46d,#a8662e 55%,#3b200e)", songs: [["Lanternlight", "3:21"], ["Hollow", "4:44"]] },
+];
+const secs2 = (d) => d.split(":").reduce((m, x) => m * 60 + Number(x), 0);
+const mins = (list) => Math.round(list.reduce((t, [, d]) => t + secs2(d), 0) / 60);
+const artistNames = [...new Set(albums.map((a) => a.artist))].sort();
+const albumsBy = (artist) => albums.filter((a) => a.artist === artist).sort((a, b) => b.year - a.year);
+
+function card(art, name, sub, round, onClick) {
+  const b = document.createElement("button");
+  b.className = "playcard" + (round ? " artistcard" : "");
+  b.innerHTML = '<span class="acover"></span><span class="pcname"></span><span class="pcsub"></span>';
+  b.querySelector(".acover").style.background = art;
+  b.querySelector(".pcname").textContent = name;
+  b.querySelector(".pcsub").textContent = sub;
+  b.addEventListener("click", onClick);
+  return b;
+}
+const albumCard = (a) => card(a.art, a.name, a.artist + " · " + a.year, false, () => openAlbum(a));
+
+function playSong(title) {
+  const i = tracks.findIndex((t) => t.title === title);
+  if (i >= 0) select(i, { start: true }); else toast("Playing " + title);
+}
+
+function row(lead, title, sub, album, time, isArt) {
+  const r = document.createElement("div");
+  r.className = "songrow";
+  const trackIndex = tracks.findIndex((track) => track.title === title);
+  if (trackIndex >= 0) r.dataset.trackIndex = String(trackIndex);
+  r.innerHTML = (isArt ? '<span class="sart"></span>' : '<span class="tno"></span>') + '<span class="songmain"><span class="stitle"></span><span class="ssub"></span></span><span class="salbum"></span><span class="stime"></span><button class="smore" aria-label="More options">⋮</button>';
+  if (isArt) r.querySelector(".sart").style.background = lead; else r.querySelector(".tno").textContent = lead;
+  r.querySelector(".stitle").textContent = title;
+  r.querySelector(".ssub").textContent = sub;
+  r.querySelector(".salbum").textContent = album;
+  r.querySelector(".stime").textContent = time;
+  r.addEventListener("click", (e) => { if (!e.target.closest(".smore")) playSong(title); });
+  return r;
+}
+
+let openAlbumData = null;
+
+function openAlbum(album) {
+  openAlbumData = album;
+  $("#alCover").style.background = album.art;
+  $("#alName").textContent = album.name;
+  $("#alArtist").textContent = album.artist;
+  $("#alSub").textContent = album.year + " · " + album.songs.length + " songs · " + mins(album.songs) + " min";
+  const list = $("#alSongs");
+  list.innerHTML = "";
+  album.songs.forEach(([t, d], i) => list.appendChild(row(String(i + 1), t, album.artist, "", d, false)));
+  $("#alPlay").onclick = () => playSong(album.songs[0][0]);
+  $("#alShuffle").onclick = () => toast("Shuffling " + album.name);
+  show("album");
+}
+
+function openArtist(name) {
+  const own = albumsBy(name);
+  const songs = own.flatMap((a) => a.songs.map(([t, d]) => [t, d, a]));
+  $("#arAvatar").style.background = own[0].art;
+  $("#arName").textContent = name;
+  $("#arSub").textContent = own.length + (own.length === 1 ? " album · " : " albums · ") + songs.length + " songs";
+  const rail = $("#arAlbums");
+  rail.innerHTML = "";
+  own.forEach((a) => rail.appendChild(albumCard(a)));
+  const list = $("#arSongs");
+  list.innerHTML = "";
+  songs.forEach(([t, d, a]) => list.appendChild(row(a.art, t, name, a.name, d, true)));
+  $("#arPlay").onclick = () => playSong(songs[0][0]);
+  $("#arShuffle").onclick = () => toast("Shuffling " + name);
+  show("artist");
+}
+
+[...albums].sort((a, b) => a.name.localeCompare(b.name)).forEach((a) => $("#albumGrid").appendChild(albumCard(a)));
+artistNames.forEach((name) => {
+  const own = albumsBy(name);
+  const count = own.reduce((n, a) => n + a.songs.length, 0);
+  $("#artistGrid").appendChild(card(own[0].art, name, own.length + (own.length === 1 ? " album · " : " albums · ") + count + " songs", true, () => openArtist(name)));
+});
+$$("[data-libback]").forEach((b) => b.addEventListener("click", () => show("library")));
+
+$$(".switch").forEach((sw) => {
+  if (sw.id === "dynamicColor") return;
+  sw.addEventListener("click", () => {
+    sw.setAttribute("aria-pressed", sw.getAttribute("aria-pressed") === "true" ? "false" : "true");
+  });
+});
+
+// ---- Pause when muted / Resume when unmuted ----
+// Muted = the system output is muted (the "Mute system" button stands in for it here)
+// or the app's own volume slider is at 0.
+let systemMuted = false;
+let effectivelyMuted = false;
+const switchOn = (id) => $(id).getAttribute("aria-pressed") === "true";
+function syncMuteSwitches() {
+  $("#resumeOnUnmute").disabled = !switchOn("#pauseOnMute"); // resuming only makes sense if muting pauses
+}
+$("#pauseOnMute").addEventListener("click", syncMuteSwitches);
+syncMuteSwitches();
+
+function updateMuted() {
+  const sliderZero = Number($("#volume").value) === 0;
+  const muted = systemMuted || sliderZero;
+  if (muted === effectivelyMuted) return;
+  effectivelyMuted = muted;
+  if (muted) {
+    if (playing && switchOn("#pauseOnMute")) {
+      setPlaying(false);
+      pausedByMute = true;
+      toast(sliderZero && !systemMuted ? "Paused · volume at 0" : "Paused · system muted");
+    }
+  } else {
+    if (pausedByMute && !playing && switchOn("#resumeOnUnmute")) {
+      setPlaying(true);
+      toast("Resumed · volume back on");
+    }
+    pausedByMute = false;
+  }
+}
+$("#volume").addEventListener("input", updateMuted);
+$("#muteBtn").addEventListener("click", () => {
+  systemMuted = !systemMuted;
+  $("#muteBtn").textContent = systemMuted ? "🔊 Unmute system" : "🔇 Mute system";
+  $("#muteBtn").setAttribute("aria-pressed", String(systemMuted));
+  toast(systemMuted ? "System muted" : "System unmuted"); // replaced by a Paused/Resumed message if one applies
+  updateMuted();
+});
+
+$("#playAll").addEventListener("click", () => {
+  select(0, { start: true });
+  toast("Playing all tracks");
+});
+
+const playlistGradients = [
+  "linear-gradient(135deg,#e0a458,#6d3b1e)",
+  "linear-gradient(135deg,#7fb7a3,#254e43)",
+  "linear-gradient(135deg,#9a8cff,#3a288f)",
+  "linear-gradient(135deg,#e8836a,#6d2e28)"
+];
+const makeTrackIds = (count, start = 0) => Array.from({ length: count }, (_, i) => (start + i) % tracks.length);
+const playlists = {
+  "Road Trip": { songs: 12, minutes: 48, trackIds: makeTrackIds(12, 0), cover: null },
+  "Favorites": { songs: 34, minutes: 134, trackIds: makeTrackIds(34, 1), cover: null },
+  "Chill": { songs: 8, minutes: 32, trackIds: makeTrackIds(8, 2), cover: null },
+  "Late Night": { songs: 19, minutes: 68, trackIds: makeTrackIds(19, 3), cover: null }
+};
+$("#plist").addEventListener("click", (event) => {
+  const card = event.target.closest(".playcard");
+  if (card) openPlaylist(card.dataset.playlist);
+});
+$(".sideblock").addEventListener("click", (event) => {
+  const item = event.target.closest(".sideplaylist");
+  if (item) openPlaylist(item.dataset.playlist);
+});
+
+function playlistCover(playlist) {
+  const first = playlist.trackIds[0];
+  return playlist.cover || (first == null ? "linear-gradient(135deg,#3a312a,#211b16)" : tracks[first % tracks.length].art);
+}
+
+function plDuration(minutes) {
+  return minutes >= 60 ? Math.floor(minutes / 60) + " hr " + (minutes % 60) + " min" : minutes + " min";
+}
+
+function plSummary(name) {
+  const playlist = playlists[name];
+  return playlist.songs + (playlist.songs === 1 ? " song" : " songs") + (playlist.songs ? " · " + plDuration(playlist.minutes) : "");
+}
+
+function renderPlaylistCards() {
+  $$("#plist .playcard").forEach((card) => {
+    const playlist = playlists[card.dataset.playlist];
+    if (!playlist) return;
+    card.querySelector(".pcover").style.background = playlistCover(playlist);
+    card.querySelector(".pcsub").textContent = plSummary(card.dataset.playlist);
+  });
+  $$(".sideplaylist").forEach((item) => {
+    const playlist = playlists[item.dataset.playlist];
+    if (!playlist) return;
+    item.querySelector(".sp-art").style.background = playlistCover(playlist);
+    item.querySelector(".sp-name").textContent = item.dataset.playlist;
+    item.querySelector(".sp-count").textContent = playlist.songs;
+  });
+  $$("#plist .playcard").forEach((card) => {
+    card.querySelector(".pcname").textContent = card.dataset.playlist;
+  });
+  $("#playlistCount").textContent = Object.keys(playlists).length + " playlists";
+}
+
+function addPlaylistCard(name, trackIds = []) {
+  const songs = trackIds.length;
+  playlists[name] = { songs, minutes: songs * 4, trackIds, cover: null };
+  const card = document.createElement("button");
+  card.className = "playcard";
+  card.dataset.playlist = name;
+  card.innerHTML = '<span class="pcover"></span><span class="pcname"></span><span class="pcsub"></span>';
+  card.querySelector(".pcover").style.background = playlistCover(playlists[name]);
+  card.querySelector(".pcname").textContent = name;
+  card.querySelector(".pcsub").textContent = plSummary(name);
+  $("#plist").appendChild(card);
+  const sideItem = document.createElement("button");
+  sideItem.className = "sideplaylist";
+  sideItem.dataset.playlist = name;
+  sideItem.innerHTML = '<span class="sp-art"></span><span class="sp-name"></span><span class="sp-count"></span>';
+  sideItem.querySelector(".sp-art").style.background = playlistCover(playlists[name]);
+  sideItem.querySelector(".sp-name").textContent = name;
+  sideItem.querySelector(".sp-count").textContent = songs;
+  $(".sideblock").appendChild(sideItem);
+  renderPlaylistCards();
+}
+
+renderPlaylistCards();
+
+$("#queueToggle").addEventListener("click", () => {
+  const hidden = app.classList.toggle("queue-collapsed");
+  $("#queueToggle").setAttribute("aria-expanded", String(!hidden));
+  $("#queueToggle").setAttribute("aria-label", hidden ? "Show queue" : "Hide queue");
+});
+
+let metaReturnFocus = null;
+function openMeta() {
+  fillMeta(tracks[current]);
+  metaReturnFocus = document.activeElement;
+  metaModal.classList.add("on");
+  metaModal.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => $("#metaCard").focus());
+}
+function closeMeta() {
+  metaModal.classList.remove("on");
+  metaModal.setAttribute("aria-hidden", "true");
+  if (metaReturnFocus && typeof metaReturnFocus.focus === "function") metaReturnFocus.focus();
+}
+$("#editMeta").addEventListener("click", openMeta);
+$("#metaClose").addEventListener("click", closeMeta);
+$("#metaCancel").addEventListener("click", closeMeta);
+$("#metaSave").addEventListener("click", () => {
+  if (!validMeta()) return;
+  const track = tracks[current];
+  const v = (id) => $(id).value.trim();
+  // A blank field removes that tag; the screens fall back to "Unknown …".
+  track.title = v("#mTitle") || "Unknown title";
+  track.artist = v("#mArtist") || "Unknown artist";
+  track.album = v("#mAlbum") || "Unknown album";
+  track.albumArtist = v("#mAlbumArtist");
+  track.year = v("#mYear");
+  track.track = v("#mTrack") ? Number(v("#mTrack")) : null;
+  track.genre = v("#mGenre");
+  if (coverRemoved) $$(".js-meta").forEach((el) => (el.style.background = "linear-gradient(135deg,#3a312a,#211b16 60%,#16120f)"));
+  select(current);
+  closeMeta();
+  toast("Song details saved");
+});
+metaModal.addEventListener("click", (event) => {
+  if (event.target === metaModal) closeMeta();
+});
+
+const dynamicSwitch = $("#dynamicColor");
+const presetSwatches = $$(".swatch[data-accent]");
+const customSwatch = $("#customSwatch");
+const accentName = $("#accentName");
+const svCanvas = $("#svCanvas");
+const svDot = $("#svDot");
+const hueRange = $("#hueRange");
+const previewDot = $("#previewDot");
+const previewHex = $("#previewHex");
+const accentApply = $("#accentApply");
+let lastManualAccent = { hex: "#e0a458", name: "Gold", swatch: presetSwatches[0] };
+let pickerH = 34;
+let pickerS = 0.61;
+let pickerV = 0.88;
+let svDragging = false;
+let accentReturnFocus = null;
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function channelToLinear(value) {
+  const c = value / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function luminance(hex) {
+  const [r, g, b] = hexToRgb(hex).map(channelToLinear);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrastRatio(a, b) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+function rgbToHex(rgb) {
+  return `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+function accentInk(hex) {
+  return contrastRatio(hex, "#20140a") >= contrastRatio(hex, "#f3ebe0") ? "#20140a" : "#f3ebe0";
+}
+function accentReadable(hex) {
+  const light = document.documentElement.dataset.theme === "light";
+  const css = getComputedStyle(document.documentElement);
+  const panels = ["--panel", "--panel2"].map((name) => css.getPropertyValue(name).trim());
+  const readsOnAll = (color) => panels.every((panel) => contrastRatio(color, panel) >= 4.5);
+  if (readsOnAll(hex)) return hex;
+  const target = light ? 0 : 255;
+  let candidate = hex;
+  for (let i = 0; i < 12; i += 1) {
+    candidate = rgbToHex(hexToRgb(candidate).map((c) => Math.round(c + (target - c) * 0.18)));
+    if (readsOnAll(candidate)) return candidate;
+  }
+  return light ? "#241a12" : "#f3ebe0";
+}
+// Accent changes blend from the old colour to the new one instead of snapping.
+const ACCENT_FADE_MS = 360;
+let accentFrame = 0;
+
+function setAccentVars(accent, readable, ink) {
+  const root = document.documentElement.style;
+  root.setProperty("--accent", accent);
+  root.setProperty("--accent-rgb", hexToRgb(accent).join(","));
+  root.setProperty("--accent-readable", readable);
+  root.setProperty("--accent-ink", ink);
+}
+
+function fadeAccentTo(hex) {
+  cancelAnimationFrame(accentFrame);
+  const css = getComputedStyle(document.documentElement);
+  const fromAccent = hexToRgb(css.getPropertyValue("--accent").trim());
+  const fromReadable = hexToRgb(css.getPropertyValue("--accent-readable").trim());
+  const fromInk = css.getPropertyValue("--accent-ink").trim();
+  const toAccent = hexToRgb(hex);
+  const toReadable = hexToRgb(accentReadable(hex));
+  const toInk = accentInk(hex);
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    setAccentVars(hex, rgbToHex(toReadable), toInk);
+    return;
+  }
+  const mix = (a, b, k) => rgbToHex(a.map((c, i) => Math.round(c + (b[i] - c) * k)));
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / ACCENT_FADE_MS);
+    const k = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // ease in-out
+    setAccentVars(mix(fromAccent, toAccent, k), mix(fromReadable, toReadable, k), k < 0.5 ? fromInk : toInk);
+    if (t < 1) accentFrame = requestAnimationFrame(step);
+  };
+  accentFrame = requestAnimationFrame(step);
+}
+
+function applyAccent(hex, name, { manual = true, swatch = null } = {}) {
+  fadeAccentTo(hex);
+  presetSwatches.forEach((item) => item.setAttribute("aria-pressed", String(item === swatch)));
+  customSwatch.setAttribute("aria-pressed", String(name === "Custom"));
+  customSwatch.style.setProperty("--custom-accent", hex);
+  accentName.textContent = name;
+  if (manual) {
+    lastManualAccent = { hex, name, swatch };
+    dynamicSwitch.setAttribute("aria-pressed", "false");
+  }
+}
+presetSwatches.forEach((button) => {
+  button.addEventListener("click", () => {
+    applyAccent(button.dataset.hex, button.dataset.accent, { manual: true, swatch: button });
+    toast(`${button.dataset.accent} accent applied`);
+  });
+});
+
+function rgbToHsv(r, g, b) {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta) {
+    if (max === r) h = ((g - b) / delta) % 6;
+    else if (max === g) h = (b - r) / delta + 2;
+    else h = (r - g) / delta + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: max ? delta / max : 0, v: max };
+}
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let rgb;
+  if (h < 60) rgb = [c, x, 0];
+  else if (h < 120) rgb = [x, c, 0];
+  else if (h < 180) rgb = [0, c, x];
+  else if (h < 240) rgb = [0, x, c];
+  else if (h < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgb.map((channel) => Math.round((channel + m) * 255));
+}
+function hsvToHex(h, s, v) {
+  return rgbToHex(hsvToRgb(h, s, v));
+}
+function hexToHsv(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHsv(r, g, b);
+}
+function drawPicker() {
+  const width = svCanvas.clientWidth;
+  const height = svCanvas.clientHeight;
+  if (!width || !height) return;
+  const dpr = window.devicePixelRatio || 1;
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  if (svCanvas.width !== pixelWidth || svCanvas.height !== pixelHeight) {
+    svCanvas.width = pixelWidth;
+    svCanvas.height = pixelHeight;
+  }
+  const ctx = svCanvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = `hsl(${pickerH},100%,50%)`;
+  ctx.fillRect(0, 0, width, height);
+  const white = ctx.createLinearGradient(0, 0, width, 0);
+  white.addColorStop(0, "rgba(255,255,255,1)");
+  white.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = white;
+  ctx.fillRect(0, 0, width, height);
+  const black = ctx.createLinearGradient(0, 0, 0, height);
+  black.addColorStop(0, "rgba(0,0,0,0)");
+  black.addColorStop(1, "rgba(0,0,0,1)");
+  ctx.fillStyle = black;
+  ctx.fillRect(0, 0, width, height);
+}
+function updatePicker() {
+  const hex = hsvToHex(pickerH, pickerS, pickerV);
+  svDot.style.left = `${pickerS * 100}%`;
+  svDot.style.top = `${(1 - pickerV) * 100}%`;
+  previewDot.style.background = hex;
+  previewHex.textContent = hex.toUpperCase();
+  hueRange.style.setProperty("--picker-preview", hex);
+  drawPicker();
+}
+function openAccentPicker() {
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e0a458";
+  const hsv = hexToHsv(accent);
+  pickerH = hsv.h;
+  pickerS = hsv.s;
+  pickerV = hsv.v;
+  hueRange.value = String(Math.round(pickerH));
+  accentReturnFocus = document.activeElement;
+  accentModal.classList.add("on");
+  accentModal.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => {
+    updatePicker();
+    $("#accentCard").focus();
+  });
+}
+function closeAccentPicker() {
+  accentModal.classList.remove("on");
+  accentModal.setAttribute("aria-hidden", "true");
+  if (accentReturnFocus && typeof accentReturnFocus.focus === "function") accentReturnFocus.focus();
+}
+function setPickerFromPointer(event) {
+  const rect = svCanvas.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+  const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+  pickerS = x;
+  pickerV = 1 - y;
+  updatePicker();
+}
+customSwatch.addEventListener("click", openAccentPicker);
+hueRange.addEventListener("input", () => {
+  pickerH = Number(hueRange.value);
+  updatePicker();
+});
+svCanvas.addEventListener("pointerdown", (event) => {
+  svDragging = true;
+  svCanvas.setPointerCapture(event.pointerId);
+  setPickerFromPointer(event);
+});
+svCanvas.addEventListener("pointermove", (event) => {
+  if (svDragging) setPickerFromPointer(event);
+});
+function endSvDrag(event) {
+  svDragging = false;
+  if (event.pointerId !== undefined && svCanvas.hasPointerCapture(event.pointerId)) {
+    svCanvas.releasePointerCapture(event.pointerId);
+  }
+}
+svCanvas.addEventListener("pointerup", endSvDrag);
+svCanvas.addEventListener("pointercancel", endSvDrag);
+svCanvas.addEventListener("keydown", (event) => {
+  const step = event.shiftKey ? 0.1 : 0.02;
+  if (event.key === "ArrowLeft") pickerS = Math.max(0, pickerS - step);
+  else if (event.key === "ArrowRight") pickerS = Math.min(1, pickerS + step);
+  else if (event.key === "ArrowDown") pickerV = Math.max(0, pickerV - step);
+  else if (event.key === "ArrowUp") pickerV = Math.min(1, pickerV + step);
+  else return;
+  event.preventDefault();
+  updatePicker();
+});
+accentApply.addEventListener("click", () => {
+  const hex = hsvToHex(pickerH, pickerS, pickerV);
+  applyAccent(hex, "Custom", { manual: true });
+  toast("Custom accent applied");
+  closeAccentPicker();
+});
+$("#accentCancel").addEventListener("click", closeAccentPicker);
+$("#accentClose").addEventListener("click", closeAccentPicker);
+accentModal.addEventListener("click", (event) => {
+  if (event.target === accentModal) closeAccentPicker();
+});
+// ---- Use system accent ----
+// The real app reads the desktop's accent (xdg-desktop-portal "accent-color"; GNOME's own setting as a
+// fallback) and follows it live. Here the "System accent" button at the top stands in for the desktop,
+// cycling GNOME's accent colours plus "None" for desktops that don't share one.
+const systemAccents = [
+  { name: "Blue", hex: "#3584e4" }, { name: "Teal", hex: "#2190a4" }, { name: "Green", hex: "#3a944a" },
+  { name: "Yellow", hex: "#c88800" }, { name: "Orange", hex: "#ed5b00" }, { name: "Red", hex: "#e62d42" },
+  { name: "Pink", hex: "#d56199" }, { name: "Purple", hex: "#9141ac" }, { name: "Slate", hex: "#6f8396" },
+  { name: "None", hex: null },
+];
+let systemAccentIndex = 0;
+const useSystemAccent = () => dynamicSwitch.getAttribute("aria-pressed") === "true";
+
+function applySystemAccent() {
+  const s = systemAccents[systemAccentIndex];
+  applyAccent(s.hex, "System · " + s.name, { manual: false, swatch: null });
+}
+
+function syncSystemAccentRow() {
+  const s = systemAccents[systemAccentIndex];
+  const supported = !!s.hex;
+  dynamicSwitch.disabled = !supported;
+  $("#sysAccentSub").textContent = supported ? "Follows your desktop's accent · " + s.name : "Your desktop doesn't share an accent color";
+  $("#sysAccentBtn").textContent = "🎨 System accent: " + s.name;
+  if (!supported && useSystemAccent()) {
+    dynamicSwitch.setAttribute("aria-pressed", "false");
+    applyAccent(lastManualAccent.hex, lastManualAccent.name, { manual: false, swatch: lastManualAccent.swatch });
+  }
+}
+
+dynamicSwitch.addEventListener("click", () => {
+  if (useSystemAccent()) {
+    dynamicSwitch.setAttribute("aria-pressed", "false");
+    applyAccent(lastManualAccent.hex, lastManualAccent.name, { manual: false, swatch: lastManualAccent.swatch });
+    toast("Using your chosen accent");
+  } else {
+    dynamicSwitch.setAttribute("aria-pressed", "true");
+    applySystemAccent();
+    toast("Following the system accent");
+  }
+});
+
+$("#sysAccentBtn").addEventListener("click", () => {
+  systemAccentIndex = (systemAccentIndex + 1) % systemAccents.length;
+  const s = systemAccents[systemAccentIndex];
+  const wasOn = useSystemAccent();
+  syncSystemAccentRow();
+  if (useSystemAccent()) applySystemAccent(); // follows the desktop live, with the usual fade
+  toast(s.hex ? "System accent is now " + s.name : wasOn ? "System accent unavailable · back to your chosen accent" : "This desktop doesn't share an accent color");
+});
+syncSystemAccentRow();
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (accentModal.classList.contains("on")) closeAccentPicker();
+  else if (metaModal.classList.contains("on")) closeMeta();
+  else $$(".overlay.on").forEach(closeModal);
+});
+window.addEventListener("resize", () => {
+  if (accentModal.classList.contains("on")) drawPicker();
+});
+
+// ---- synced lyrics (.lrc sidecar) ----
+const lrc = (rows) => rows.map(([t, text]) => ({ t, text }));
+tracks[0].lyrics = lrc([
+  [6.2, "Headlights paint the empty road"], [12.8, "Neon hums a slower code"],
+  [19.4, "Every sign says take it slow"], [26, "Every exit, let it go"],
+  [34.1, "Midnight drive, no need to hide"], [40.6, "City breathing at my side"],
+  [47.2, "Radio glow, a borrowed light"], [53.8, "We don't stop until it's bright"],
+  [62.4, "Static rolling off the bay"], [69, "Silver wires hum and sway"],
+  [75.6, "Hold the wheel and hold the line"], [82.2, "Every mile becomes a sign"],
+  [90, "Midnight drive, no need to hide"], [96.5, "City breathing at my side"],
+  [103.1, "Radio glow, a borrowed light"], [109.7, "We don't stop until it's bright"]
+]);
+tracks[2].lyrics = lrc([
+  [4, "Static on the window glass"], [10.5, "Signals that will never pass"],
+  [17, "I keep the dial between the names"], [23.5, "Every frequency the same"],
+  [31, "Bloom, bloom in the quiet hum"], [37.5, "Wait for the morning, here it comes"]
+]);
+// Copper Sky has lyrics inside the song file (no .lrc): shown, labelled, and saved as an .lrc when edited.
+tracks[3].lyrics = lrc([
+  [null, "Copper sky above the field"], [null, "Every road a turning wheel"],
+  [null, "Northbound, northbound, carry me home"], [null, "Into the light we haven't known"]
+]);
+tracks[3].embedded = true;
+tracks.forEach((track) => {
+  if (!track.lyrics) track.lyrics = [];
+});
+
+const lrcTime = (t) => (t == null ? "--:--.--" : String(Math.floor(t / 60)).padStart(2, "0") + ":" + (t % 60).toFixed(2).padStart(5, "0"));
+const homeView = $('.view[data-view="home"]');
+const lyricsCard = $("#lyricsCard");
+
+function setPos(value) {
+  pos = Math.min(Number(seek.max), Math.max(0, value));
+  seek.value = pos;
+  elapsed.textContent = fmt(pos);
+  $("#lseek").value = pos;
+  $("#ltime").textContent = lrcTime(pos);
+  $("#stampLabel").textContent = "Stamp " + lrcTime(pos);
+  syncLyrics();
+}
+
+setInterval(() => {
+  if (playing) setPos(pos + 0.25 >= Number(seek.max) ? 0 : pos + 0.25);
+}, 250);
+
+function activeLine(lines) {
+  let active = -1;
+  lines.forEach((line, i) => {
+    if (line.t != null && line.t <= pos) active = i;
+  });
+  return active;
+}
+
+function renderLyrics() {
+  const lines = tracks[current].lyrics;
+  const list = $("#lyricList");
+  list.innerHTML = "";
+  lines.forEach((line) => {
+    const li = document.createElement("li");
+    li.textContent = line.text;
+    if (line.t == null) li.className = "untimed";
+    else li.addEventListener("click", () => setPos(line.t));
+    list.appendChild(li);
+  });
+  $("#lyricsPanel").classList.toggle("empty", !lines.length);
+  const synced = lines.some((line) => line.t != null);
+  $("#lyricsPanel").classList.toggle("unsynced", !!lines.length && !synced);
+  $("#lyricSource").textContent = tracks[current].embedded ? "Lyrics · from the song file" : (synced ? "Lyrics · synced" : "Lyrics");
+  syncLyrics();
+}
+
+function syncLyrics() {
+  const active = activeLine(tracks[current].lyrics);
+  const items = $$("#lyricList li");
+  items.forEach((li, i) => {
+    li.classList.toggle("on", i === active);
+    li.classList.toggle("past", i < active);
+  });
+  const target = items[Math.max(active, 0)];
+  if (!target) return;
+  const offset = $("#lyricWin").clientHeight / 2 - target.offsetTop - target.offsetHeight / 2;
+  $("#lyricList").style.transform = `translateY(${offset}px)`;
+}
+
+$("#lyricsToggle").addEventListener("click", () => {
+  const on = homeView.classList.toggle("lyrics-on");
+  $("#lyricsToggle").setAttribute("aria-pressed", String(on));
+  syncLyrics();
+});
+
+// ---- modals ----
+let modalReturnFocus = null;
+const modalPrep = {
+  lyricsModal: openLyricsEditor,
+  exportModal: prepExport,
+  importModal: resetImport,
+  convertModal: prepConvert,
+  playlistNameModal: prepPlaylistName,
+  playlistOptionsModal: prepPlaylistOptions,
+  confirmDeleteModal: prepDeleteConfirm,
+  songOptionsModal: prepSongOptions,
+  addToPlaylistModal: renderAddPlaylistChoices
+};
+
+function openModal(id) {
+  const modal = $("#" + id);
+  if (modalPrep[id]) modalPrep[id]();
+  modalReturnFocus = document.activeElement;
+  modal.classList.add("on");
+  modal.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => modal.querySelector(".overlay-card").focus());
+}
+
+function closeModal(modal) {
+  if (!modal.classList.contains("on")) return;
+  // Leaving the lyrics editor with unsaved changes asks first.
+  if (modal.id === "lyricsModal" && lyricsDirty && !forceClose) { leaveLyrics(); return; }
+  modal.classList.remove("on");
+  modal.setAttribute("aria-hidden", "true");
+  if (modalReturnFocus && typeof modalReturnFocus.focus === "function") modalReturnFocus.focus();
+}
+
+$$("[data-modal]").forEach((el) => el.addEventListener("click", () => openModal(el.dataset.modal)));
+$$("[data-lyrics-edit]").forEach((el) => el.addEventListener("click", () => openModal("lyricsModal")));
+$$("[data-modal-close]").forEach((el) => el.addEventListener("click", () => closeModal(el.closest(".overlay"))));
+Object.keys(modalPrep).forEach((id) => {
+  $("#" + id).addEventListener("click", (event) => {
+    if (event.target.id === id) closeModal(event.target);
+  });
+});
+
+$$(".seg:not(#lyrMode)").forEach((group) => {
+  group.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    group.querySelectorAll("button").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+  });
+});
+
+$$("[data-picker]").forEach((el) => el.addEventListener("click", () => toast("Opens the system folder picker")));
+
+// ---- lyrics editor ----
+let draft = [];
+let selLine = 0;
+let lyricMode = "lines";
+
+function openLyricsEditor() {
+  lyricsDirty = false;
+  const track = tracks[current];
+  draft = track.lyrics.map((line) => ({ ...line }));
+  if (!draft.length) draft.push({ t: null, text: "" });
+  selLine = Math.max(0, activeLine(draft));
+  $("#lrcName").textContent = track.title + ".lrc";
+  setLyricMode("lines");
+  requestAnimationFrame(() => revealLine(true));
+}
+
+// Scroll only the line list; scrollIntoView would also shift the clipped app frame.
+function revealLine(center = false) {
+  const list = $("#lrcLines");
+  const sel = list.querySelector(".sel");
+  if (!sel) return;
+  const top = sel.offsetTop;
+  const bottom = top + sel.offsetHeight;
+  if (center) list.scrollTop = top - list.clientHeight / 2;
+  else if (top < list.scrollTop) list.scrollTop = top;
+  else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+}
+
+function readPaste() {
+  const rows = $("#lrcPaste").value.split("\n").map((row) => row.trim()).filter(Boolean);
+  draft = rows.map((text, i) => ({ t: draft[i] ? draft[i].t : null, text }));
+  if (!draft.length) draft.push({ t: null, text: "" });
+  selLine = Math.min(selLine, draft.length - 1);
+}
+
+function setLyricMode(mode) {
+  lyricMode = mode;
+  lyricsCard.classList.toggle("paste", mode === "paste");
+  $$("#lyrMode button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.value === mode)));
+  if (mode === "paste") $("#lrcPaste").value = draft.map((line) => line.text).join("\n");
+  $("#lrcNote").innerHTML = mode === "paste"
+    ? "One line per row. Switch back to <b>Timed lines</b> to add timestamps."
+    : "Play the song and press <b>Stamp</b> as each line starts. Click a time to jump there.";
+  renderDraft();
+}
+
+$("#lyrMode").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button || button.dataset.value === lyricMode) return;
+  if (lyricMode === "paste") readPaste();
+  setLyricMode(button.dataset.value);
+});
+
+function selectLine(i) {
+  selLine = i;
+  $$("#lrcLines .lrow").forEach((row, index) => row.classList.toggle("sel", index === i));
+}
+
+function renderDraft() {
+  const list = $("#lrcLines");
+  list.innerHTML = "";
+  draft.forEach((line, i) => {
+    const row = document.createElement("div");
+    row.className = "lrow" + (i === selLine ? " sel" : "");
+    row.innerHTML = '<button class="lstamp" type="button"></button><input class="ltext" placeholder="Lyric line"><button class="ldel" type="button" aria-label="Delete line">×</button>';
+    const stamp = row.querySelector(".lstamp");
+    stamp.textContent = lrcTime(line.t);
+    stamp.classList.toggle("unset", line.t == null);
+    stamp.setAttribute("aria-label", line.t == null ? "Not timed yet" : "Jump to " + lrcTime(line.t));
+    stamp.addEventListener("click", () => {
+      selectLine(i);
+      if (line.t != null) setPos(line.t);
+    });
+    const input = row.querySelector(".ltext");
+    input.value = line.text;
+    input.setAttribute("aria-label", "Lyric line " + (i + 1));
+    input.addEventListener("focus", () => selectLine(i));
+    input.addEventListener("input", () => (line.text = input.value));
+    row.querySelector(".ldel").addEventListener("click", () => {
+      draft.splice(i, 1);
+      if (!draft.length) draft.push({ t: null, text: "" });
+      selLine = Math.min(selLine, draft.length - 1);
+      renderDraft();
+    });
+    list.appendChild(row);
+  });
+}
+
+function stampLine() {
+  draft[selLine].t = Math.round(pos * 100) / 100;
+  if (selLine < draft.length - 1) selLine += 1;
+  renderDraft();
+  revealLine();
+}
+
+$("#stampBtn").addEventListener("click", stampLine);
+lyricsCard.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && lyricMode === "lines") {
+    event.preventDefault();
+    stampLine();
+  }
+});
+
+$("#addLine").addEventListener("click", () => {
+  draft.splice(selLine + 1, 0, { t: null, text: "" });
+  selLine += 1;
+  renderDraft();
+  $("#lrcLines .sel .ltext").focus();
+});
+
+$("#lseek").addEventListener("input", () => setPos(Number($("#lseek").value)));
+
+$("#saveLyrics").addEventListener("click", () => {
+  if (lyricMode === "paste") readPaste();
+  // Untimed lines keep their place by borrowing the previous line's time for sorting.
+  let last = 0;
+  const lines = draft.filter((line) => line.text.trim()).map((line) => {
+    if (line.t != null) last = line.t;
+    return { ...line, key: line.t ?? last };
+  });
+  lines.sort((a, b) => a.key - b.key);
+  const track = tracks[current];
+  track.lyrics = lines.map(({ t, text }) => ({ t, text }));
+  const untimed = track.lyrics.filter((line) => line.t == null).length;
+  closeModal($("#lyricsModal"));
+  show("home");
+  if (!homeView.classList.contains("lyrics-on")) $("#lyricsToggle").click();
+  renderLyrics();
+  toast("Saved " + track.title + ".lrc" + (untimed ? " · " + untimed + " not timed" : ""));
+});
+
+// ---- playlists ----
+let openPl = "Road Trip";
+let pendingSongIndex = current;
+let pendingPlaylistIndex = 0;
+let playlistNameAction = "create";
+
+$("#plBack").addEventListener("click", () => show("playlists"));
+
+$("#plPlay").addEventListener("click", () => {
+  if (!playlists[openPl].songs) return toast("Add songs first");
+  select(playlists[openPl].trackIds[0] ?? 0, { start: true }); // Play/Shuffle only play, like clicking a song
+  toast("Playing " + openPl);
+});
+
+$("#plShuffle").addEventListener("click", () => {
+  const playlist = playlists[openPl];
+  if (!playlist.trackIds.length) return toast("Add songs first");
+  const index = playlist.trackIds[Math.floor(Math.random() * playlist.trackIds.length)];
+  select(index, { start: true });
+  const button = $("#shuffle");
+  button.setAttribute("aria-pressed", "true");
+  button.classList.add("active");
+  toast("Shuffling " + openPl);
+});
+
+function uniquePlaylistName(value, ignore = null) {
+  const base = value.trim() || "New playlist";
+  let name = base;
+  for (let n = 2; playlists[name] && name !== ignore; n += 1) name = base + " (" + n + ")";
+  return name;
+}
+
+function prepPlaylistName() {
+  const renaming = playlistNameAction === "rename";
+  $("#playlistNameTitle").textContent = renaming ? "Rename playlist" : "New playlist";
+  $("#playlistNameInput").value = renaming ? openPl : "";
+  $("#savePlaylistName").textContent = renaming ? "Save name" : "Create playlist";
+}
+
+function prepPlaylistOptions() {
+  $$(".js-plname").forEach((el) => (el.textContent = openPl));
+}
+
+function prepDeleteConfirm() {
+  $("#deletePlaylistTitle").textContent = "Delete " + openPl + "?";
+}
+
+function prepSongOptions() {
+  $("#songOptionsTitle").textContent = tracks[pendingSongIndex].title;
+}
+
+
+function renderPlaylistDetail(name) {
+  const playlist = playlists[name];
+  if (!playlist) return;
+  $("#plName").textContent = name;
+  $("#plSub").textContent = plSummary(name) + " · local playlist";
+  $("#plCover").style.background = playlistCover(playlist);
+  $("#plCoverNote").textContent = playlist.cover ? "Custom cover" : playlist.songs ? "Cover · first song" : "No cover yet";
+  $$(".js-plname").forEach((el) => (el.textContent = name));
+  const list = $("#plSongs");
+  list.innerHTML = "";
+  for (let i = 0; i < Math.min(playlist.songs, 8); i += 1) {
+    const index = playlist.trackIds[i] ?? i % tracks.length;
+    const track = tracks[index];
+    const row = document.createElement("div");
+    row.className = "songrow";
+    row.dataset.playlistIndex = String(i);
+    row.dataset.trackIndex = String(index);
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.innerHTML = '<span class="sart"></span><span class="songmain"><span class="stitle"></span><span class="ssub"></span></span><span class="salbum"></span><span class="stime"></span><button class="smore" aria-label="Song options">⋮</button>';
+    row.querySelector(".sart").style.background = track.art;
+    row.querySelector(".stitle").textContent = track.title;
+    row.querySelector(".ssub").textContent = track.artist;
+    row.querySelector(".salbum").textContent = track.album;
+    row.querySelector(".stime").textContent = track.duration;
+    row.addEventListener("click", (event) => {
+      if (event.target.closest(".smore")) return;
+      select(index, { start: true });
+    });
+    list.appendChild(row);
+  }
+  if (playlist.songs > 8 || !playlist.songs) {
+    const more = document.createElement(playlist.songs ? "div" : "button");
+    more.className = playlist.songs ? "more" : "more actionable";
+    if (playlist.songs) {
+      more.textContent = "+ " + (playlist.songs - 8) + " more";
+    } else {
+      more.type = "button";
+      more.textContent = "Add songs to this playlist from your Library ›";
+      more.addEventListener("click", () => show("library"));
+    }
+    list.appendChild(more);
+  }
+}
+
+function openPlaylist(name) {
+  openPl = name;
+  renderPlaylistDetail(name);
+  show("playlist");
+}
+
+function updatePlaylistViews(name) {
+  const playlist = playlists[name];
+  if (!playlist) return;
+  playlist.songs = playlist.trackIds.length;
+  playlist.minutes = playlist.songs * 4;
+  renderPlaylistCards();
+  if (openPl === name) renderPlaylistDetail(name);
+}
+
+function renderAddPlaylistChoices() {
+  const choices = $("#addPlaylistChoices");
+  choices.innerHTML = "";
+  Object.keys(playlists).forEach((name) => {
+    const alreadyAdded = playlists[name].trackIds.includes(pendingSongIndex);
+    const button = document.createElement("button");
+    button.className = "choice";
+    button.innerHTML = '<span class="choice-text"><span class="choice-name"></span><small class="choice-sub"></small></span><span aria-hidden="true">›</span>';
+    button.querySelector(".choice-name").textContent = name;
+    button.querySelector(".choice-sub").textContent = alreadyAdded ? "Already in this playlist" : plSummary(name);
+    button.addEventListener("click", () => {
+      if (alreadyAdded) {
+        $("#addPlaylistFeedback").textContent = "Already in " + name;
+        return;
+      }
+      playlists[name].trackIds.push(pendingSongIndex);
+      updatePlaylistViews(name);
+      closeModal($("#addToPlaylistModal"));
+      toast("Added to " + name);
+    });
+    choices.appendChild(button);
+  });
+  $("#addSongName").textContent = tracks[pendingSongIndex].title + " · " + tracks[pendingSongIndex].artist;
+  $("#addPlaylistFeedback").textContent = "Already in a playlist? It won't be added twice.";
+}
+
+$("#addPl").addEventListener("click", () => {
+  playlistNameAction = "create";
+  openModal("playlistNameModal");
+});
+
+$("#savePlaylistName").addEventListener("click", () => {
+  const value = $("#playlistNameInput").value.trim();
+  if (!value) {
+    $("#playlistNameInput").focus();
+    return;
+  }
+  if (playlistNameAction === "rename") {
+    const oldName = openPl;
+    const name = uniquePlaylistName(value, oldName);
+    if (name !== oldName) {
+      playlists[name] = playlists[oldName];
+      delete playlists[oldName];
+      $$(".playcard, .sideplaylist").forEach((item) => {
+        if (item.dataset.playlist === oldName) item.dataset.playlist = name;
+      });
+      openPl = name;
+    }
+    renderPlaylistCards();
+    renderPlaylistDetail(openPl);
+    toast("Playlist renamed");
+  } else {
+    const name = uniquePlaylistName(value);
+    addPlaylistCard(name, playlistNameAction === "createAndAdd" ? [pendingSongIndex] : []);
+    openPlaylist(name);
+    toast(playlistNameAction === "createAndAdd" ? "Added to " + name : "Playlist created");
+  }
+  closeModal($("#playlistNameModal"));
+});
+
+$("#renamePl").addEventListener("click", () => {
+  closeModal($("#playlistOptionsModal"));
+  playlistNameAction = "rename";
+  openModal("playlistNameModal");
+});
+
+$("#addSongsToPlaylist").addEventListener("click", () => {
+  closeModal($("#playlistOptionsModal"));
+  show("library");
+});
+
+$("#changePlCover").addEventListener("click", () => {
+  closeModal($("#playlistOptionsModal"));
+  const first = playlists[openPl].trackIds[0] ?? 0;
+  playlists[openPl].cover = tracks[(first + 1) % tracks.length].art;
+  renderPlaylistCards();
+  renderPlaylistDetail(openPl);
+  toast("Playlist cover changed");
+});
+
+$("#removePlCover").addEventListener("click", () => {
+  closeModal($("#playlistOptionsModal"));
+  playlists[openPl].cover = null;
+  renderPlaylistCards();
+  renderPlaylistDetail(openPl);
+  toast("Using the first song's cover");
+});
+
+$("#deletePl").addEventListener("click", () => {
+  closeModal($("#playlistOptionsModal"));
+  openModal("confirmDeleteModal");
+});
+
+$("#confirmDeletePl").addEventListener("click", () => {
+  const name = openPl;
+  delete playlists[name];
+  $$(".playcard, .sideplaylist").forEach((item) => {
+    if (item.dataset.playlist === name) item.remove();
+  });
+  renderPlaylistCards();
+  closeModal($("#confirmDeleteModal"));
+  show("playlists");
+  toast("Playlist deleted");
+});
+
+// ---- One song menu everywhere (library, album, artist, playlist rows, Song details) ----
+let pendingDetails = null; // the song the menu was opened for
+
+function setSongMenu({ showDetails = true, inPlaylist = false } = {}) {
+  $("#songViewDetails").hidden = !showDetails;
+  $$("#songOptionsModal .js-plonly").forEach((el) => { el.hidden = !inPlaylist; });
+}
+
+// What Song details shows for a row. The sample album pages include songs that
+// aren't among the four sample tracks; for those, use what the row and album say.
+function songFromRow(row) {
+  const rowIndex = row.dataset.index ?? row.dataset.trackIndex;
+  if (rowIndex !== undefined) {
+    const i = Number(rowIndex);
+    return { ...tracks[i], index: i, track: i + 1 };
+  }
+  const title = row.querySelector(".stitle").textContent;
+  const albumName = row.querySelector(".salbum").textContent || openAlbumData?.name || "";
+  const album = albums.find((a) => a.name === albumName) ?? openAlbumData;
+  const n = album ? album.songs.findIndex(([t]) => t === title) : -1;
+  return {
+    title, index: -1,
+    artist: row.querySelector(".ssub").textContent,
+    album: albumName, year: album?.year ?? "—", genre: "—",
+    track: n >= 0 ? n + 1 : "—",
+    duration: row.querySelector(".stime").textContent,
+    art: album?.art ?? row.querySelector(".sart")?.style.background ?? tracks[0].art,
+  };
+}
+
+document.addEventListener("click", (event) => {
+  const more = event.target.closest(".smore");
+  if (!more) return;
+  const row = more.closest(".songrow");
+  if (row) {
+    pendingDetails = songFromRow(row);
+    pendingSongIndex = Math.max(0, pendingDetails.index);
+  } else {
+    pendingDetails = { ...tracks[current], index: current, track: current + 1 };
+    pendingSongIndex = current;
+  }
+  const inPlaylist = !!row?.closest("#plSongs");
+  if (inPlaylist) pendingPlaylistIndex = Number(row.dataset.playlistIndex);
+  setSongMenu({ inPlaylist });
+  openModal("songOptionsModal");
+});
+
+// ---- Song details: Home for the playing song (Home is desktop's Now Playing), else the sleeve page ----
+let detailsSong = null;
+
+function openDetails(song) {
+  detailsSong = song;
+  const from = document.querySelector(".view.on")?.dataset.view;
+  if (from && from !== "details") detailsReturn = from;
+  $("#dtCover").style.background = song.art;
+  $("#dtLabel").style.background = song.art;
+  $("#dtHeading").textContent = song.title;
+  $("#dtArtist").textContent = song.artist;
+  $("#dtAlbum").textContent = song.album;
+  $("#dtYear").textContent = song.year;
+  $("#dtGenre").textContent = song.genre;
+  $("#dtTrack").textContent = String(song.track);
+  $("#dtLength").textContent = song.duration;
+  $("#dtNote").replaceChildren("Not playing. ", Object.assign(document.createElement("b"), { textContent: tracks[current].title }),
+    playing ? " keeps playing until you press Play." : " stays paused until you press Play.");
+  show("details");
+}
+
+$("#songViewDetails").addEventListener("click", () => {
+  closeModal($("#songOptionsModal"));
+  if (pendingDetails.index === current) show("home");
+  else openDetails(pendingDetails);
+});
+$("#detailsBack").addEventListener("click", () => show(detailsReturn));
+$("#detailsMore").addEventListener("click", () => {
+  pendingDetails = detailsSong;
+  pendingSongIndex = Math.max(0, detailsSong.index);
+  setSongMenu({ showDetails: false }); // already viewing its details
+  openModal("songOptionsModal");
+});
+$("#dtPlay").addEventListener("click", () => {
+  if (detailsSong.index >= 0) select(detailsSong.index, { start: true });
+  else toast("Playing " + detailsSong.title);
+  show("home");
+});
+$("#dtAdd").addEventListener("click", () => {
+  pendingSongIndex = Math.max(0, detailsSong.index);
+  openModal("addToPlaylistModal");
+});
+
+$("#songEditLyrics").addEventListener("click", () => {
+  closeModal($("#songOptionsModal"));
+  toast("Edit lyrics");
+});
+$("#songEditMetadata").addEventListener("click", () => {
+  closeModal($("#songOptionsModal"));
+  toast("Edit metadata");
+});
+$("#addSongToPlaylist").addEventListener("click", () => {
+  closeModal($("#songOptionsModal"));
+  openModal("addToPlaylistModal");
+});
+$("#songViewLocation").addEventListener("click", () => {
+  closeModal($("#songOptionsModal"));
+  toast("View file location");
+});
+$("#newPlaylistFromPicker").addEventListener("click", () => {
+  closeModal($("#addToPlaylistModal"));
+  playlistNameAction = "createAndAdd";
+  openModal("playlistNameModal");
+});
+
+$("#removeFromPl").addEventListener("click", () => {
+  playlists[openPl].trackIds.splice(pendingPlaylistIndex, 1);
+  updatePlaylistViews(openPl);
+  closeModal($("#songOptionsModal"));
+  toast("Removed from " + openPl);
+});
+
+// ---- Playlist reordering: press and hold a row (mouse or touch), then drag it ----
+// A quick click still plays the song; moving before the hold completes does nothing special.
+const HOLD_MS = 450;
+const HOLD_SLOP = 8;
+let plHold = null;
+let plDrag = null;
+let suppressPlClick = false;
+
+function cancelPlHold() {
+  if (!plHold) return;
+  clearTimeout(plHold.timer);
+  plHold.row.classList.remove("holding");
+  plHold = null;
+}
+
+function startPlDrag() {
+  const { row, pointerId, startY } = plHold;
+  cancelPlHold();
+  const list = $("#plSongs");
+  const rows = [...list.querySelectorAll(".songrow")];
+  const scroller = list.closest(".view");
+  plDrag = {
+    row, rows, list, scroller, pointerId, startY,
+    from: rows.indexOf(row), to: rows.indexOf(row),
+    step: rows.length > 1 ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top : row.offsetHeight,
+    startScroll: scroller.scrollTop,
+  };
+  list.classList.add("reordering");
+  row.classList.add("dragging");
+  try { list.setPointerCapture(pointerId); } catch {}
+}
+
+function movePlDrag(clientY) {
+  const d = plDrag;
+  const box = d.scroller.getBoundingClientRect();
+  if (clientY < box.top + 56) d.scroller.scrollTop -= 8;
+  else if (clientY > box.bottom - 56) d.scroller.scrollTop += 8;
+  const raw = clientY - d.startY + (d.scroller.scrollTop - d.startScroll);
+  const dy = Math.max(-d.from * d.step, Math.min((d.rows.length - 1 - d.from) * d.step, raw));
+  d.to = d.from + Math.round(dy / d.step);
+  d.row.style.transform = `translateY(${dy}px)`;
+  d.rows.forEach((r, i) => {
+    if (r === d.row) return;
+    let shift = 0;
+    if (i > d.from && i <= d.to) shift = -d.step;
+    else if (i < d.from && i >= d.to) shift = d.step;
+    r.style.transform = shift ? `translateY(${shift}px)` : "";
+  });
+}
+
+function endPlDrag(commit) {
+  const d = plDrag;
+  plDrag = null;
+  d.rows.forEach((r) => { r.style.transform = ""; });
+  d.row.classList.remove("dragging");
+  d.list.classList.remove("reordering");
+  suppressPlClick = true;
+  setTimeout(() => { suppressPlClick = false; }, 400);
+  if (!commit || d.to === d.from) return;
+  const ids = playlists[openPl].trackIds;
+  const [moved] = ids.splice(d.from, 1);
+  ids.splice(d.to, 0, moved);
+  updatePlaylistViews(openPl);
+  toast(`Moved to position ${d.to + 1}`);
+}
+
+$("#plSongs").addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  const row = event.target.closest(".songrow");
+  if (!row || event.target.closest(".smore") || plDrag) return;
+  plHold = { row, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY };
+  row.classList.add("holding");
+  plHold.timer = setTimeout(startPlDrag, HOLD_MS);
+});
+document.addEventListener("pointermove", (event) => {
+  if (plDrag && event.pointerId === plDrag.pointerId) movePlDrag(event.clientY);
+  else if (plHold && event.pointerId === plHold.pointerId &&
+      Math.hypot(event.clientX - plHold.startX, event.clientY - plHold.startY) > HOLD_SLOP) cancelPlHold();
+});
+document.addEventListener("pointerup", (event) => {
+  if (plDrag && event.pointerId === plDrag.pointerId) endPlDrag(true);
+  else cancelPlHold();
+});
+document.addEventListener("pointercancel", () => {
+  if (plDrag) endPlDrag(false);
+  cancelPlHold();
+});
+$("#plSongs").addEventListener("touchmove", (event) => { if (plDrag) event.preventDefault(); }, { passive: false });
+$("#plSongs").addEventListener("contextmenu", (event) => { if (event.target.closest(".songrow")) event.preventDefault(); });
+$("#plSongs").addEventListener("click", (event) => {
+  if (!suppressPlClick) return;
+  event.stopPropagation();
+  event.preventDefault();
+  suppressPlClick = false;
+}, true);
+
+// Export as an M3U8 track list, or as a Record Disc bundle (.rdplaylist: a ZIP with the songs, lyrics and cover).
+function setExportFormat(format) {
+  const bundle = format === "bundle";
+  $$("#exportFormat button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.value === format)));
+  $$(".js-m3u").forEach((el) => (el.hidden = bundle));
+  $$(".js-bundle").forEach((el) => (el.hidden = !bundle));
+  $("#formatHint").textContent = bundle ? "Songs, lyrics and cover in one file" : "Track list most players can open";
+  $("#exportNote").textContent = bundle
+    ? "Copies of the songs go into one .rdplaylist file (a ZIP anyone can open). Your music folder isn't changed."
+    : "Exports the track list only. Your audio files stay where they are.";
+  const base = $("#exportName").value.replace(/\.(m3u8|rdplaylist)$/i, "") || openPl;
+  $("#exportName").value = base + (bundle ? ".rdplaylist" : ".m3u8");
+}
+$("#exportFormat").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setExportFormat(b.dataset.value); });
+
+function prepExport() {
+  clearInterval(desktopExportTimer);
+  desktopExportTimer = null;
+  desktopExportActive = false;
+  desktopExportPercent = 0;
+  $("#exportSettings").hidden = false;
+  $("#exportProgressPanel").hidden = true;
+  $("#doExport").hidden = false;
+  $("#doExport").textContent = "Export";
+  $("#cancelExportAction").textContent = "Cancel";
+  $$(".js-plname").forEach((el) => (el.textContent = openPl));
+  $("#exportName").value = openPl + ".m3u8";
+  setExportFormat("m3u8");
+}
+
+$("#pathMode").addEventListener("click", () => {
+  const relative = $('#pathMode [aria-pressed="true"]').dataset.value === "relative";
+  $("#pathHint").textContent = relative ? "Portable if files move together" : "Only works on this computer";
+});
+
+let desktopExportTimer = null;
+let desktopExportPercent = 0;
+let desktopExportActive = false;
+
+function updateDesktopExportProgress() {
+  const amount = `${(10 * desktopExportPercent / 100).toFixed(1)} / 10 MB processed`;
+  $("#exportProgressPercent").textContent = `${desktopExportPercent}%`;
+  $("#exportProgressAmount").textContent = amount;
+  $("#exportProgressFill").style.width = `${desktopExportPercent}%`;
+  $("#exportProgressBar").setAttribute("aria-valuenow", String(desktopExportPercent));
+  $("#exportProgressPhase").textContent = desktopExportPercent < 60 ? "Packaging" : "Saving";
+}
+
+function startDesktopExport() {
+  clearInterval(desktopExportTimer);
+  desktopExportPercent = 0;
+  desktopExportActive = true;
+  $("#exportSettings").hidden = true;
+  $("#exportProgressPanel").hidden = false;
+  $("#exportProgressStatus").textContent = "Packaging songs and lyrics";
+  $("#exportProgressPercent").textContent = "0%";
+  $("#exportProgressAmount").textContent = "0 / 10 MB processed";
+  $("#exportProgressFill").style.width = "0%";
+  $("#exportProgressBar").setAttribute("aria-valuenow", "0");
+  $("#exportProgressPhase").textContent = "Packaging";
+  $("#cancelExportAction").textContent = "Cancel export";
+  $("#doExport").hidden = true;
+  desktopExportTimer = setInterval(() => {
+    desktopExportPercent = Math.min(100, desktopExportPercent + 10);
+    updateDesktopExportProgress();
+    if (desktopExportPercent === 100) {
+      clearInterval(desktopExportTimer);
+      desktopExportTimer = null;
+      desktopExportActive = false;
+      $("#exportProgressStatus").textContent = "Export complete";
+      $("#exportProgressPhase").textContent = "Complete";
+      $("#cancelExportAction").textContent = "Done";
+      toast("Exported " + $("#exportName").value);
+    } else {
+      $("#exportProgressStatus").textContent = desktopExportPercent < 60 ? "Packaging songs and lyrics" : "Saving playlist package";
+    }
+  }, 500);
+}
+
+function cancelDesktopExport() {
+  clearInterval(desktopExportTimer);
+  desktopExportTimer = null;
+  desktopExportActive = false;
+  $("#exportProgressStatus").textContent = "Export canceled";
+  $("#exportProgressPhase").textContent = "Canceled";
+  $("#cancelExportAction").textContent = "Close";
+  $("#doExport").hidden = false;
+  $("#doExport").textContent = "Export again";
+  toast("Playlist export canceled");
+}
+
+$("#doExport").addEventListener("click", () => {
+  const bundle = $('#exportFormat [aria-pressed="true"]').dataset.value === "bundle";
+  if (bundle) {
+    startDesktopExport();
+    return;
+  }
+  closeModal($("#exportModal"));
+  toast("Exported " + $("#exportName").value);
+});
+
+$("#cancelExportAction").addEventListener("click", () => {
+  if (desktopExportActive) {
+    cancelDesktopExport();
+    return;
+  }
+  closeModal($("#exportModal"));
+});
+
+$("#exportModal").querySelectorAll('[data-modal-close]').forEach((button) => {
+  button.addEventListener("click", () => {
+    if (desktopExportActive) cancelDesktopExport();
+  });
+});
+
+function resetImport() {
+  $('[data-istage="pick"]').hidden = false;
+  $('[data-istage="review"]').hidden = true;
+  $('[data-istage="bundle"]').hidden = true;
+  $("#importName").value = "Summer 2025";
+}
+
+$("#pickPl").addEventListener("click", () => {
+  $('[data-istage="pick"]').hidden = true;
+  $('[data-istage="review"]').hidden = false;
+});
+
+$("#doImport").addEventListener("click", () => {
+  const name = uniquePlaylistName($("#importName").value.trim() || "Imported playlist");
+  addPlaylistCard(name, makeTrackIds(12, 0));
+  closeModal($("#importModal"));
+  toast("Imported " + name + " · 12 songs");
+});
+
+$("#pickBundle").addEventListener("click", () => {
+  $('[data-istage="pick"]').hidden = true;
+  $('[data-istage="bundle"]').hidden = false;
+});
+$("#doImportBundle").addEventListener("click", () => {
+  const name = uniquePlaylistName($("#importBundleName").value.trim() || "Imported playlist");
+  addPlaylistCard(name, makeTrackIds(4, 0));
+  closeModal($("#importModal"));
+  toast("Imported " + name + " · 3 songs copied, 1 already there");
+});
+
+// ---- convert playlist to one audio file ----
+const formats = {
+  flac: { ext: "flac", mbPerMin: 6.5 },
+  mp3: { ext: "mp3", mbPerMin: 2.4 },
+  m4a: { ext: "m4a", mbPerMin: 1.9 },
+  ogg: { ext: "ogg", mbPerMin: 1.4 },
+  opus: { ext: "opus", mbPerMin: 1.2 },
+  wav: { ext: "wav", mbPerMin: 10.1 }
+};
+let convertTimer = null;
+
+// Where each song starts is marked in the formats that can carry it (PM, 2026-11-04).
+const cvMarkText = {
+  flac: "Song starts are marked (cue sheet), so players that support it can skip between songs.",
+  m4a: "Song starts are marked as chapters, so players that support them can skip between songs.",
+  opus: "Song starts are marked as chapters, so players that support them can skip between songs.",
+  ogg: "Song starts are marked as chapters, so players that support them can skip between songs.",
+  mp3: "MP3 can't mark where each song starts; it's one continuous track.",
+  wav: "WAV can't mark where each song starts; it's one continuous track.",
+};
+function updateMarks() {
+  $("#cvMarks").textContent = cvMarkText[$("#cvFormat").value];
+}
+$("#cvFormat").addEventListener("change", updateMarks);
+
+function cvStage(stage) {
+  $$("[data-cstage]").forEach((el) => (el.hidden = el.dataset.cstage !== stage));
+}
+
+function updateEstimate() {
+  const pl = playlists[openPl];
+  const format = formats[$("#cvFormat").value];
+  const gap = gapSeconds();
+  const minutes = pl.minutes + (pl.songs * gap) / 60;
+  const mb = minutes * format.mbPerMin;
+  $("#cvEstimate").textContent = "≈ " + (mb >= 1000 ? (mb / 1000).toFixed(1) + " GB" : Math.round(mb) + " MB") + " · " + plDuration(Math.round(minutes));
+  $("#cvName").value = $("#cvName").value.replace(/\.[a-z0-9]+$/i, "") + "." + format.ext;
+}
+
+function prepConvert() {
+  if (convertTimer) return;
+  $$(".js-plname").forEach((el) => (el.textContent = openPl));
+  $$(".js-plsub").forEach((el) => (el.textContent = plSummary(openPl)));
+  $("#cvName").value = openPl + ".flac";
+  cvStage("setup");
+  updateEstimate();
+  updateMarks();
+}
+
+$("#cvFormat").addEventListener("change", updateEstimate);
+// ---- Gap between songs: whole seconds, stepped or typed, never below 0 ----
+function gapSeconds() {
+  const value = Math.round(Number($("#cvGapInput").value));
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+function setGap(seconds) {
+  const clean = Math.max(0, Math.round(Number(seconds) || 0));
+  $("#cvGapInput").value = String(clean);
+  $("#cvGapLess").disabled = clean === 0;
+  updateEstimate();
+}
+$("#cvGapLess").addEventListener("click", () => setGap(gapSeconds() - 1));
+$("#cvGapMore").addEventListener("click", () => setGap(gapSeconds() + 1));
+$("#cvGapInput").addEventListener("input", () => {
+  // Typing: fix anything below 0 (or not a number) straight away; keep partial entries otherwise.
+  if ($("#cvGapInput").value !== "" && !(Number($("#cvGapInput").value) >= 0)) setGap(0);
+  else { $("#cvGapLess").disabled = gapSeconds() === 0; updateEstimate(); }
+});
+$("#cvGapInput").addEventListener("change", () => setGap($("#cvGapInput").value));
+$("#cvGapInput").addEventListener("focus", () => $("#cvGapInput").select()); // typing replaces the number
+$("#cvGapInput").addEventListener("keydown", (event) => {
+  if (event.key === "-" || event.key === "e") event.preventDefault(); // no negatives or exponents
+});
+
+$("#doConvert").addEventListener("click", () => {
+  const pl = playlists[openPl];
+  if (!pl.songs) return toast("Add songs first");
+  const file = $("#cvName").value;
+  let done = 0;
+  const step = () => {
+    const pct = Math.round((done / pl.songs) * 100);
+    $("#cvStep").textContent = "Song " + Math.min(done + 1, pl.songs) + " of " + pl.songs;
+    $("#cvTrack").textContent = tracks[Math.min(done, pl.songs - 1) % tracks.length].title;
+    $("#cvBar").style.width = pct + "%";
+    $("#cvPct").textContent = pct + "%";
+    Object.assign(convertTask, { pct, step: $("#cvStep").textContent, track: $("#cvTrack").textContent });
+    syncConvertTask();
+  };
+  Object.assign(convertTask, { state: "running", file, playlist: openPl, format: $("#cvFormat").selectedOptions[0].textContent.split(" ·")[0] });
+  cvStage("progress");
+  step();
+  convertTimer = setInterval(() => {
+    done += 1;
+    step();
+    if (done < pl.songs) return;
+    clearInterval(convertTimer);
+    convertTimer = null;
+    $("#cvDoneName").textContent = file;
+    cvStage("done");
+    convertTask.state = "done";
+    syncConvertTask();
+    if (!$("#convertModal").classList.contains("on")) toast(file + " saved to ~/Music/Exports");
+  }, Math.max(90, 3600 / pl.songs));
+});
+
+// ---- Convert to Audio: closing the popup keeps the job running and lists it in the Inbox (PM, 2026-11-04) ----
+const convertTask = { state: "idle", pct: 0, step: "", track: "", file: "", playlist: "", format: "" };
+function syncConvertTask() {
+  const running = convertTask.state === "running";
+  $("#inboxConvertTask").hidden = convertTask.state === "idle";
+  $("#inboxConvertTitle").textContent = running ? `Converting “${convertTask.playlist}”` : `Converted “${convertTask.playlist}”`;
+  $("#inboxConvertSub").textContent = `${convertTask.format} · ${convertTask.file}`;
+  $("#inboxConvertPercent").textContent = convertTask.pct + "%";
+  $("#inboxConvertStage").textContent = running ? `${convertTask.step} · ${convertTask.track}` : "Saved to ~/Music/Exports";
+  $("#inboxConvertFill").style.width = convertTask.pct + "%";
+  $("#inboxConvertState").textContent = running ? "In progress" : "Done";
+  $("#reopenConvertProgress").hidden = !running;
+  $("#cancelConvertFromInbox").hidden = !running;
+  $("#dismissConvertTask").hidden = running;
+  $("#inboxEmpty").hidden = !$("#inboxConvertTask").hidden;
+  $("#inboxBadge").hidden = !running;
+  $("#inboxBadge").textContent = convertTask.pct + "%";
+}
+// Closing the popup mid-conversion: the job carries on and waits in the Inbox.
+new MutationObserver(() => {
+  if (convertTimer && !$("#convertModal").classList.contains("on")) toast("Still converting — it's in your Inbox");
+}).observe($("#convertModal"), { attributes: true, attributeFilter: ["class"] });
+$("#reopenConvertProgress").addEventListener("click", () => { show("inbox"); openModal("convertModal"); });
+$("#cancelConvertFromInbox").addEventListener("click", () => $("#cancelConvert").click());
+$("#dismissConvertTask").addEventListener("click", () => { convertTask.state = "idle"; syncConvertTask(); });
+
+$("#cancelConvert").addEventListener("click", () => {
+  clearInterval(convertTimer);
+  convertTimer = null;
+  cvStage("setup");
+  convertTask.state = "idle";
+  syncConvertTask();
+  toast("Conversion cancelled");
+});
+
+renderSongs();
+select(0);
+setPos(42);
+setPlaying(false);
+
+
+// First run: detected Music folder (or another one picked in the system dialog) → scanning → done / nothing found.
+(() => {
+  const layer = $("#firstRun");
+  const chooser = $("#sysChooser");
+  const found = { "~/Music": 342, "/media/usb-drive/Music": 1204 };
+  let path = "~/Music";
+  let picked = path;
+  let scanTimer = null;
+
+  const step = (name) => $$("#firstRun .wstep").forEach((el) => el.classList.toggle("on", el.dataset.step === name));
+  const setPath = (p) => {
+    path = p;
+    $$(".js-fpath").forEach((el) => (el.textContent = p));
+    $(".js-fsub").textContent = p === "~/Music" ? "Your Music folder, from your desktop settings" : "Chosen by you";
+  };
+  const stopScan = () => {
+    clearInterval(scanTimer);
+    scanTimer = null;
+    document.body.classList.remove("scanning");
+  };
+
+  $("#firstRunBtn").addEventListener("click", () => {
+    stopScan();
+    if (playing) setPlaying(false);
+    setPath("~/Music");
+    step("intro");
+    layer.classList.add("on");
+  });
+
+  const openChooser = () => chooser.classList.add("on");
+  $("#changeFolder").addEventListener("click", openChooser);
+  $("#chooseAgain").addEventListener("click", openChooser);
+  $$("#sysChooser .wrow").forEach((row) =>
+    row.addEventListener("click", () => {
+      $$("#sysChooser .wrow").forEach((r) => r.classList.toggle("sel", r === row));
+      picked = row.dataset.path;
+    }),
+  );
+  $("#chooserCancel").addEventListener("click", () => chooser.classList.remove("on"));
+  $("#chooserSelect").addEventListener("click", () => {
+    chooser.classList.remove("on");
+    setPath(picked);
+    step("intro");
+  });
+
+  const demoFiles = ["Neon Coast – Midnight Drive.flac", "Lumen – Paper Moons.mp3", "Harbor Lights – Tidal.opus", "The Quiet Hours – Static Bloom.m4a", "Velvet Arcade – Coin Slot.ogg"];
+  $("#scanStart").addEventListener("click", () => {
+    step("scan");
+    document.body.classList.add("scanning");
+    const total = found[path] || 0;
+    let n = 0;
+    let emptyTicks = 0;
+    $("#scanCount").textContent = "0";
+    scanTimer = setInterval(() => {
+      n = Math.min(total, n + 9 + Math.floor(Math.random() * 14));
+      $("#scanCount").textContent = n.toLocaleString();
+      $("#scanFile").textContent = total ? `${path}/${demoFiles[n % demoFiles.length]}` : " ";
+      if (n >= total && (total > 0 || ++emptyTicks > 12)) {
+        stopScan();
+        $("#doneCount").textContent = total.toLocaleString();
+        step(total ? "done" : "empty");
+      }
+    }, 90);
+  });
+  $("#scanCancel").addEventListener("click", () => {
+    stopScan();
+    step("intro");
+  });
+  $("#startListening").addEventListener("click", () => {
+    layer.classList.remove("on");
+    show("home");
+  });
+})();
+
+// Disc spin with momentum: like a turntable, speed eases up to full when playing and coasts down when paused.
+(() => {
+  const PERIOD_MS = 18000; // one turn at full speed
+  const SPIN_UP_MS = 300; // time constants: settles in about 3x these (~1 s up, ~2 s down)
+  const SPIN_DOWN_MS = 600;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const discs = $$(".disc");
+  let angle = 0;
+  let speed = 0;
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min(now - last, 100); // avoid a jump after the tab was hidden
+    last = now;
+    const spinning = document.body.classList.contains("playing") || document.body.classList.contains("scanning");
+    const target = spinning && !reduceMotion.matches ? 1 : 0;
+    speed += (target - speed) * (1 - Math.exp(-dt / (target > speed ? SPIN_UP_MS : SPIN_DOWN_MS)));
+    if (target === 0 && speed < 0.001) speed = 0;
+    if (speed > 0) {
+      angle = (angle + (speed * dt * 360) / PERIOD_MS) % 360;
+      discs.forEach((disc) => (disc.style.transform = `rotate(${angle}deg)`));
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+
+// ---- metadata editor: validation, cover removal and state preview ----
+let coverRemoved = false;
+function checkField(id, ok) {
+  const field = $(id).closest(".field");
+  field.classList.toggle("bad", !ok);
+  return ok;
+}
+function validMeta() {
+  const year = $("#mYear").value.trim();
+  const track = $("#mTrack").value.trim();
+  const a = checkField("#mYear", year === "" || /^\d{4}$/.test(year));
+  const b = checkField("#mTrack", track === "" || (/^\d{1,3}$/.test(track) && Number(track) >= 1));
+  $("#metaSave").disabled = !(a && b);
+  return a && b;
+}
+["#mYear", "#mTrack"].forEach((id) => $(id).addEventListener("input", validMeta));
+$("#removeCover").addEventListener("click", () => {
+  coverRemoved = !coverRemoved;
+  $("#removeCover").textContent = coverRemoved ? "Keep cover" : "Remove cover";
+  $("#coverNote").textContent = coverRemoved ? "The cover will be removed when you save" : "";
+  document.querySelector('[data-screen="metadata"] .mart, #metaModal .mart').style.opacity = coverRemoved ? ".35" : "1";
+});
+const editorStates = {
+  normal: { },
+  
+  readonly: { notice: "<b>This file can't be changed</b>Its tags couldn't be read, so saving could damage it.", lock: true },
+  invalid: { year: "24", track: "0" },
+  failed: { error: "Couldn't save: the music folder isn't available right now. Your changes are still here; try again." },
+  saving: { saving: true },
+};
+function setEditorState(name) {
+  if (!metaModal.classList.contains("on")) openMeta();
+  const s = editorStates[name];
+  fillMeta(tracks[current]);
+  coverRemoved = false;
+  $("#removeCover").textContent = "Remove cover";
+  $("#coverNote").textContent = "";
+  document.querySelector('[data-screen="metadata"] .mart, #metaModal .mart').style.opacity = "1";
+  $("#metaNotice").innerHTML = s.notice || "";
+  $("#metaNotice").classList.toggle("on", !!s.notice);
+  $("#metaError").textContent = s.error || "";
+  $("#metaError").classList.toggle("on", !!s.error);
+  if (s.year) $("#mYear").value = s.year;
+  if (s.track) $("#mTrack").value = s.track;
+  const locked = !!s.lock || !!s.saving;
+  ["#mTitle","#mArtist","#mAlbum","#mAlbumArtist","#mYear","#mTrack","#mGenre"].forEach((id) => ($(id).disabled = locked));
+  $$(".js-metactl").forEach((b) => (b.disabled = locked));
+  validMeta();
+  const save = $("#metaSave");
+  save.textContent = s.saving ? "Saving…" : "Save changes";
+  if (locked) save.disabled = true;
+  $$(".editorstate button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.state === name)));
+  const allow = $("#allowEdit");
+  if (allow) allow.addEventListener("click", () => { toast("Editing allowed"); setEditorState("normal"); });
+}
+$$(".editorstate button").forEach((b) => b.addEventListener("click", () => setEditorState(b.dataset.state)));
+
+
+// ---- lyrics editor: unsaved-changes check and state preview ----
+let lyricsDirty = false;
+let forceClose = false;
+["#lrcLines", "#lrcPaste"].forEach((id) => $(id).addEventListener("input", () => (lyricsDirty = true)));
+["#stampBtn", "#addLine"].forEach((id) => $(id).addEventListener("click", () => (lyricsDirty = true)));
+$("#lrcLines").addEventListener("click", (e) => { if (e.target.closest(".ldel")) lyricsDirty = true; });
+function leaveLyrics() {
+  if (lyricsDirty) { $("#discardDlg").hidden = false; $("#keepEditing").focus(); return false; }
+  forceClose = true; closeModal($("#lyricsModal")); forceClose = false;
+  return true;
+}
+$("#keepEditing").addEventListener("click", () => ($("#discardDlg").hidden = true));
+$("#discardBtn").addEventListener("click", () => { $("#discardDlg").hidden = true; lyricsDirty = false; forceClose = true; closeModal($("#lyricsModal")); forceClose = false; });
+
+$("#saveLyrics").addEventListener("click", () => (lyricsDirty = false), true);
+const lyricsStates = {
+  normal: {},
+  
+  readonly: { notice: "<b>Lyrics can't be saved here</b>You don't have permission to change files in this folder.", lock: true },
+  failed: { error: "Couldn't save the lyrics: the music folder isn't available right now. Your changes are still here; try again." },
+  saving: { saving: true },
+  discard: { discard: true },
+};
+function setLyricsState(name) {
+  if (!$("#lyricsModal").classList.contains("on")) openModal("lyricsModal");
+  const s = lyricsStates[name];
+  $("#lyrNotice").innerHTML = s.notice || "";
+  $("#lyrNotice").classList.toggle("on", !!s.notice);
+  $("#lyrError").textContent = s.error || "";
+  $("#lyrError").classList.toggle("on", !!s.error);
+  const locked = !!s.lock || !!s.saving;
+  $$("#lrcLines input, #lrcLines button, #lrcPaste, #stampBtn, #addLine").forEach((el) => (el.disabled = locked));
+  $("#saveLyrics").disabled = locked;
+  $("#saveLyrics").textContent = s.saving ? "Saving…" : "Save lyrics";
+  lyricsDirty = !!s.discard;
+  $("#discardDlg").hidden = true;
+  if (s.discard) leaveLyrics();
+  $$(".lyricsstate button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lstate === name)));
+  const allow = $("#allowLyr");
+  if (allow) allow.addEventListener("click", () => { toast("Editing allowed"); setLyricsState("normal"); });
+}
+$$(".lyricsstate button").forEach((b) => b.addEventListener("click", () => setLyricsState(b.dataset.lstate)));
+
+// Theme: System follows the OS setting; Dark and Light force it. The corner switch mirrors Settings.
+const themeSelect = document.querySelector('select[aria-label="Theme"]');
+const themeButtons = [...document.querySelectorAll(".themepreview button")];
+const systemDark = matchMedia("(prefers-color-scheme: dark)");
+let themeChoice = themeSelect.value;
+function applyTheme(choice) {
+  themeChoice = choice;
+  const light = choice === "Light" || (choice === "System" && !systemDark.matches);
+  document.documentElement.classList.add("theme-swap");
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e0a458";
+  document.documentElement.style.setProperty("--accent-ink", accentInk(accent));
+  document.documentElement.style.setProperty("--accent-readable", accentReadable(accent));
+  themeSelect.value = choice;
+  themeButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.theme === choice)));
+  requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.remove("theme-swap")));
+}
+themeSelect.addEventListener("change", () => applyTheme(themeSelect.value));
+themeButtons.forEach((button) => button.addEventListener("click", () => applyTheme(button.dataset.theme)));
+systemDark.addEventListener("change", () => { if (themeChoice === "System") applyTheme("System"); });
+applyTheme(themeChoice);
+</script>
+</body>
+</html>
