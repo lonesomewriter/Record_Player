@@ -41,3 +41,9 @@
 - **Gradle commands now run from `project/framework`** (`cd project/framework && ./gradlew …`). `scripts/build.sh` is unchanged for whoever runs it.
 - **Editors:** open `project/framework` (or the repo root) as the Gradle project.
 - **The F-Droid recipe** uses `subdir: project/framework/androidApp`.
+
+## 4. F-Droid-style check after the move (2026-11-06 14:04 UTC)
+- **Setup:** a fresh clone of commit `c8ebb60` with JDK 21, no `local.properties`, no `.env` and no signing variables. The SDK came from `ANDROID_HOME`.
+- **Command:** `cd project/framework && ./gradlew :androidApp:assembleRelease`. It gives `androidApp-release-unsigned.apk`: `dev.recorddisc.player`, versionCode 1, versionName 0.1.0.
+- **Permissions:** foreground service (playback, data sync), notifications, wake lock. **No internet.**
+- The recipe draft's `subdir: project/framework/androidApp` matches.

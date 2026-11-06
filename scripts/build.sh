@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record Player: build the Android APK and the Linux desktop .deb, check them, and file them
-# under project-builds/ with a summary log. Follows project-guidelines/linux_packaging.md.
+# under project-builds/, each with its build summary beside it. Follows project-guidelines/linux_packaging.md.
 #
 # Usage:
 #   scripts/build.sh [dev|release] [--android] [--desktop]
@@ -12,7 +12,7 @@
 #
 # Output (old builds are never overwritten or deleted):
 #   project-builds/<dev|release>-builds/RecordPlayer-<platform>-<version>_<YYYY-MM-DD_HHMM>/
-#   project-builds/logs/RecordPlayer-<platform>-<version>_<YYYY-MM-DD_HHMM>.md
+#     the APK or .deb, and build-summary.md (a failed build gets the folder and summary only)
 #
 # Release builds sign the APK with your own keystore, read from the gitignored .env
 # (see .env_example). Values are never printed or logged.
@@ -134,8 +134,7 @@ read -r -p "Build anyway? [y/N]: " answer || answer=""
 # ---------- shared output setup ----------
 STAMP="$(date +%Y-%m-%d_%H%M)"
 BUILD_ROOT="project-builds/${BUILD_TYPE}-builds"
-LOG_DIR="project-builds/logs"
-mkdir -p "$BUILD_ROOT" "$LOG_DIR"
+mkdir -p "$BUILD_ROOT"
 GRADLE_VERSION="$(gradlew --version 2>/dev/null | sed -n 's/^Gradle //p' | sed -n 1p)"
 toml() { sed -n "s/^$1 *= *\"\(.*\)\"/\1/p" $FW/dependencies/libs.versions.toml | sed -n 1p; }
 WORK="$(mktemp -d)"
@@ -145,7 +144,9 @@ OVERALL_OK=1
 write_log() { # write_log <platform> <folder-or-empty> <artifact lines...>
   local platform="$1" folder="$2"; shift 2
   local name="${RELEASE_NAME}-${platform}-${VERSION}_${STAMP}"
-  local log="$LOG_DIR/${name}.md"
+  # The summary goes in the build's own folder (linux_packaging.md); a failed build still gets one.
+  [[ -n "$folder" ]] || folder="$(new_folder "$platform")"
+  local log="$folder/build-summary.md"
   {
     printf '# Build summary: %s\n\n' "$name"
     printf '| | |\n|---|---|\n'
@@ -154,7 +155,7 @@ write_log() { # write_log <platform> <folder-or-empty> <artifact lines...>
     printf '| Platform | %s |\n' "$platform"
     printf '| App version | %s |\n' "$VERSION"
     printf '| Result | **%s** |\n' "$( ((PLATFORM_OK)) && echo SUCCESS || echo FAILED)"
-    printf '| Output folder | %s |\n' "${folder:-none (failed builds are not filed)}"
+    printf '| Output folder | %s%s |\n' "$folder" "$( ((PLATFORM_OK)) || echo ' (failed: no package filed)')"
     printf '| Git commit | %s%s |\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" "$(git diff --quiet HEAD 2>/dev/null || echo ' (with uncommitted changes)')"
     printf '\n## Tools\n\n'
     printf -- '- Gradle %s\n- JDK: %s\n- Kotlin %s\n- Compose Multiplatform %s\n- Android Gradle Plugin %s\n' \
@@ -165,7 +166,7 @@ write_log() { # write_log <platform> <folder-or-empty> <artifact lines...>
     printf '\n## Mockup changes not yet in the app (confirmed before building)\n\n'
     if ((${#PENDING[@]})); then printf -- '- %s\n' "${PENDING[@]}"; else printf -- '- None\n'; fi
   } > "$log"
-  info "Summary log: $log"
+  info "Summary: $log"
 }
 
 new_folder() { # new_folder <platform>  -> prints the folder path; never reuses one
@@ -350,4 +351,4 @@ fi
 
 echo
 if ((OVERALL_OK)); then bold "Build finished: all checks passed."
-else die "Build finished with failures. See the summary log(s) in $LOG_DIR."; fi
+else die "Build finished with failures. See build-summary.md in the build folder(s) above."; fi

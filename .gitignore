@@ -21,7 +21,7 @@ captures
 *.apk
 *.aab
 
-# desktop packages (build binaries stay local; only project-builds/logs is tracked)
+# desktop packages (build binaries stay local; only each build folder's build-summary is tracked)
 *.deb
 *.rpm
 *.msi

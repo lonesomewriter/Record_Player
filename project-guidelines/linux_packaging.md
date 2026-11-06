@@ -3,7 +3,7 @@
 	- If "/project-builds" doesn't exist, create it. This is a strict folder structure you MUST follow.
 		- If the build is a test/dev build: "/project-builds/dev-builds/(build-name)"
 		- If the build is a release build: "/project-builds/release-builds/(build-name)""
-	- A "build summary" should be logged in "/project-builds/logs"
+	- A "build summary" must be logged in the same folder the application build went into
 * Builds MUST have properly bundled all proper dependencies/components required for it to run. Always check the valadity of said build(s) for any missing components, scripts, packages, or dependencies that otherwise prevent it from running on a machine.
 * Always ask the user which type the build is(release, or dev), then send the build to it's respective folder
 * Builds MUST be checked against all known issues / issues listed(see section: "Known Errors for Builds")
