@@ -8,18 +8,22 @@ Read [AGENTS.md](../AGENTS.md) and the files in [project-guidelines/](../project
 
 ## Project layout
 
+The app's code (a Kotlin Multiplatform / Gradle project) is in [`project/framework/`](../project/framework/). Gradle commands run from there; `scripts/build.sh` runs from the repo root. Paths below are inside `project/framework/` unless they start with `/`.
+
 | Module | Contents |
 |---|---|
 | `shared/` | Code used by both apps. `commonMain`: UI, music library, player rules (queue, shuffle, repeat), Convert to Audio rules. `jvmShared`: tag editing (jaudiotagger + our Opus tag support) and song marks for converted files. `jvmMain`: Linux playback and conversion through GStreamer. |
 | `androidApp/` | Android entry point, the background playback service (Media3, lock-screen/notification controls) and the Android converter (MediaCodec). |
 | `desktopApp/` | Linux desktop entry point and `.deb` packaging (including the menu entry in `packaging/linux/`). |
-| `scripts/` | `build.sh`: builds, checks and files the Android APK and Linux `.deb`. |
 | `iosApp/` | An early iOS screen port in Swift (built with Xcode, not part of the Gradle build). |
+| `dependencies/` | The version catalog (`libs.versions.toml`) and a [list of every dependency](../project/framework/dependencies/README.md) with its licence and telemetry check. |
+| `/scripts/` | `build.sh`: builds, checks and files the Android APK and Linux `.deb`. |
+| `/fastlane/` | The F-Droid store listing. |
 
 ## Requirements
 
 - **JDK 25.** The Linux player uses Java's FFM API (Java 22+). Gradle won't download JDKs automatically.
-- **Android SDK** with platform API 37 (the app compiles against 37 and targets 36; minimum is Android 8.0, API 26). Put its location in a `local.properties` file at the repo root: `sdk.dir=/path/to/android-sdk`. That file is gitignored.
+- **Android SDK** with platform API 37 (the app compiles against 37 and targets 36; minimum is Android 8.0, API 26). Put its location in a `local.properties` file in `project/framework/`: `sdk.dir=/path/to/android-sdk`. That file is gitignored.
 - **GStreamer 1.x on Linux** for playback and conversion, with the base, good and libav plugins. On Debian/Ubuntu:
   ```sh
   sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
@@ -31,7 +35,8 @@ Read [AGENTS.md](../AGENTS.md) and the files in [project-guidelines/](../project
 ## Common commands
 
 ```sh
-scripts/build.sh dev                         # build, check and file the APK and .deb (asks first)
+scripts/build.sh dev                         # from the repo root: build, check and file the APK and .deb (asks first)
+cd project/framework                         # the Gradle commands below run from here
 ./gradlew :desktopApp:run                    # run the Linux desktop app
 ./gradlew :androidApp:assembleDebug          # build the Android debug APK
 ./gradlew :shared:jvmTest                    # run tests (playback/conversion tests skip if GStreamer is missing)
@@ -47,7 +52,7 @@ Release builds (`scripts/build.sh release`) sign the APK with your own keystore,
 - **`.rdplaylist`** is a standard ZIP containing the playlist, unchanged audio files, optional `.lrc` lyrics and a cover. Import validates archive paths and sizes before extraction, reuses songs already in the library, and copies new songs under `Music/Imported/<playlist>/`.
 - Android uses the Storage Access Framework; Linux uses native file dialogs.
 
-## Animation settings (`web-configs.json`)
+## Animation settings (`project/framework/web-configs.json`)
 
 Timings you can tune without touching the code. They're read when the app is **built** and compiled in, so rebuild after changing them. The app never downloads this file or anything else.
 

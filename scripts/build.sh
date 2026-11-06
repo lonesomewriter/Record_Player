@@ -22,6 +22,9 @@ set -euo pipefail
 RELEASE_NAME="RecordPlayer"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+# The Gradle project lives in project/framework (project folder rule, 2026-11-06); this script still runs from the repo root.
+FW="project/framework"
+gradlew() { "$FW/gradlew" -p "$FW" "$@"; }
 
 STATUS_FILE="project-notes/mockup-port-status.md"
 DEB_DEPENDS_REQUIRED=("libgstreamer1.0-0" "gstreamer1.0-plugins-base" "gstreamer1.0-plugins-good")
@@ -69,14 +72,14 @@ bold "Record Player build: $BUILD_TYPE ($( ((WANT_ANDROID)) && printf 'android '
 
 # ---------- 1. preflight ----------
 bold "1. Preflight"
-[[ -x ./gradlew ]] || die "gradlew not found. Run this from the Music_Player repo."
+[[ -x "$FW/gradlew" ]] || die "$FW/gradlew not found. Is this the Record Player repo?"
 command -v java >/dev/null || die "java (a JDK) is not on PATH."
 JAVA_VERSION="$(java -version 2>&1 | sed -n 1p)"
 info "JDK: $JAVA_VERSION"
 
-ANDROID_VERSION="$(sed -n 's/^ *versionName = "\(.*\)".*/\1/p' androidApp/build.gradle.kts | sed -n 1p)"
-DESKTOP_VERSION="$(sed -n 's/^ *packageVersion = "\(.*\)".*/\1/p' desktopApp/build.gradle.kts | sed -n 1p)"
-DEB_PACKAGE="$(sed -n 's/^ *packageName = "\(.*\)".*/\1/p' desktopApp/build.gradle.kts | sed -n 1p)"
+ANDROID_VERSION="$(sed -n 's/^ *versionName = "\(.*\)".*/\1/p' $FW/androidApp/build.gradle.kts | sed -n 1p)"
+DESKTOP_VERSION="$(sed -n 's/^ *packageVersion = "\(.*\)".*/\1/p' $FW/desktopApp/build.gradle.kts | sed -n 1p)"
+DEB_PACKAGE="$(sed -n 's/^ *packageName = "\(.*\)".*/\1/p' $FW/desktopApp/build.gradle.kts | sed -n 1p)"
 [[ -n "$ANDROID_VERSION" && -n "$DESKTOP_VERSION" ]] || die "Couldn't read the app versions from the Gradle files."
 [[ "$ANDROID_VERSION" == "$DESKTOP_VERSION" ]] \
   || die "Version mismatch: Android versionName is $ANDROID_VERSION but desktop packageVersion is $DESKTOP_VERSION. Make them match first."
@@ -84,8 +87,8 @@ VERSION="$ANDROID_VERSION"
 info "App version: $VERSION"
 
 if ((WANT_ANDROID)); then
-  SDK_DIR="${ANDROID_HOME:-$(sed -n 's/^sdk.dir=//p' local.properties 2>/dev/null || true)}"
-  [[ -n "$SDK_DIR" && -d "$SDK_DIR" ]] || die "Android SDK not found (set sdk.dir in local.properties or ANDROID_HOME)."
+  SDK_DIR="${ANDROID_HOME:-$(sed -n 's/^sdk.dir=//p' "$FW/local.properties" 2>/dev/null || true)}"
+  [[ -n "$SDK_DIR" && -d "$SDK_DIR" ]] || die "Android SDK not found (set sdk.dir in $FW/local.properties or ANDROID_HOME)."
   BUILD_TOOLS="$(ls -d "$SDK_DIR"/build-tools/* 2>/dev/null | sort -V | tail -1)"
   [[ -x "$BUILD_TOOLS/apksigner" && -x "$BUILD_TOOLS/aapt2" ]] || die "Android build-tools (apksigner, aapt2) not found under $SDK_DIR/build-tools."
   info "Android build-tools: $(basename "$BUILD_TOOLS")"
@@ -133,8 +136,8 @@ STAMP="$(date +%Y-%m-%d_%H%M)"
 BUILD_ROOT="project-builds/${BUILD_TYPE}-builds"
 LOG_DIR="project-builds/logs"
 mkdir -p "$BUILD_ROOT" "$LOG_DIR"
-GRADLE_VERSION="$(./gradlew --version 2>/dev/null | sed -n 's/^Gradle //p' | sed -n 1p)"
-toml() { sed -n "s/^$1 *= *\"\(.*\)\"/\1/p" gradle/libs.versions.toml | sed -n 1p; }
+GRADLE_VERSION="$(gradlew --version 2>/dev/null | sed -n 's/^Gradle //p' | sed -n 1p)"
+toml() { sed -n "s/^$1 *= *\"\(.*\)\"/\1/p" $FW/dependencies/libs.versions.toml | sed -n 1p; }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT  # only this run's scratch space; builds are never deleted
 OVERALL_OK=1
@@ -178,10 +181,10 @@ file_info() { printf '%s (%s, SHA-256 %s)' "$(basename "$1")" "$(du -h "$1" | cu
 if ((WANT_ANDROID)); then
   bold "3. Android APK"
   CHECKS=(); PLATFORM_OK=1
-  if [[ "$BUILD_TYPE" == dev ]]; then TASK=":androidApp:assembleDebug"; APK="androidApp/build/outputs/apk/debug/androidApp-debug.apk"
-  else TASK=":androidApp:assembleRelease"; APK="androidApp/build/outputs/apk/release/androidApp-release.apk"; fi
+  if [[ "$BUILD_TYPE" == dev ]]; then TASK=":androidApp:assembleDebug"; APK="$FW/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
+  else TASK=":androidApp:assembleRelease"; APK="$FW/androidApp/build/outputs/apk/release/androidApp-release.apk"; fi
   rm -f "$APK"  # a stale APK from an earlier Gradle run must not pass for this one
-  if ./gradlew "$TASK" --console=plain > "$WORK/android-gradle.log" 2>&1; then
+  if gradlew "$TASK" --console=plain > "$WORK/android-gradle.log" 2>&1; then
     check 0 "Gradle $TASK" "succeeded"
   else
     check 1 "Gradle $TASK" "failed; last lines: $(tail -3 "$WORK/android-gradle.log" | tr '\n' ' ' | cut -c1-200)"
@@ -224,10 +227,10 @@ fi
 if ((WANT_DESKTOP)); then
   bold "4. Linux desktop .deb"
   CHECKS=(); PLATFORM_OK=1
-  DEB_DIR="desktopApp/build/compose/binaries/main/deb"
+  DEB_DIR="$FW/desktopApp/build/compose/binaries/main/deb"
   DEB="$DEB_DIR/${DEB_PACKAGE}_${VERSION}_amd64.deb"
   rm -f "$DEB_DIR"/*.deb 2>/dev/null || true  # Gradle output only, so a stale package can't pass for this one
-  if ./gradlew :desktopApp:packageDeb --console=plain > "$WORK/desktop-gradle.log" 2>&1; then
+  if gradlew :desktopApp:packageDeb --console=plain > "$WORK/desktop-gradle.log" 2>&1; then
     check 0 "Gradle :desktopApp:packageDeb" "succeeded"
   else
     check 1 "Gradle :desktopApp:packageDeb" "failed; last lines: $(tail -3 "$WORK/desktop-gradle.log" | tr '\n' ' ' | cut -c1-200)"
