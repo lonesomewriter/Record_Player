@@ -162,12 +162,12 @@ fun BoxScope.DesktopTagEditor(model: AppModel, track: TrackEntity, actions: Edit
     LaunchedEffect(Unit) { focus.requestFocus() }
     val shape = RoundedCornerShape(22.dp)
     Box(
-        Modifier.matchParentSize().background(disc.scrim)
+        Modifier.matchParentSize().scrimIn().background(disc.scrim)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { if (!state.saving) onClose() },
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.padding(24.dp).widthIn(max = 620.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
+            Modifier.padding(24.dp).popIn().widthIn(max = 620.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
                 // Clicks inside the card don't close it.
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .focusRequester(focus).focusable()

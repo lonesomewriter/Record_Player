@@ -65,6 +65,7 @@ import dev.recorddisc.player.app.ThemeMode
 import dev.recorddisc.player.app.ScanState
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** On/off switch drawn like the mockups: accent track with a dark knob when on. */
 @Composable
@@ -236,12 +237,12 @@ fun BoxScope.AccentPicker(start: Long, eyebrow: String? = null, onCancel: () -> 
     val color = Color.hsv(hue, sat, value)
     val shape = RoundedCornerShape(22.dp)
     Box(
-        Modifier.matchParentSize().background(disc.scrim)
+        Modifier.matchParentSize().scrimIn().background(disc.scrim)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onCancel),
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.padding(24.dp).widthIn(max = 390.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
+            Modifier.padding(24.dp).popIn().widthIn(max = 390.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
                 // Clicks inside the card don't close it.
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(20.dp),
@@ -326,9 +327,11 @@ fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Uni
         SettingRow("Accent color", settings.accentName(dynamicOn)) {
             AccentSwatches(model, settings, dynamicOn, 26.dp, 5.dp, onCustomAccent)
         }
-        SettingRow("Dynamic color", "From current cover art", divider = false) {
+        SettingRow("Dynamic color", "From current cover art") {
             SettingSwitch(dynamicOn, "Dynamic color", enabled = true) { model.setFlag(AppSettings.DYNAMIC_COLOR, it) }
         }
+        ShineRow(model, settings, textSize = null)
+        BatterySaverRow(model, settings, textSize = null)
         SettingsSectionLabel("Library", Modifier.padding(top = 22.dp))
         SettingRow("Music folder", settings.musicFolder?.let(model.platform::folderLabel)) { SmallButton("Change", enabled = !scanning, onClick = onChooseFolder) }
         SettingRow("Rescan library", divider = false) { SmallButton(rescan, enabled = !scanning, onClick = model::rescanNow) }
@@ -347,6 +350,52 @@ fun PhoneSettings(model: AppModel, onBack: () -> Unit, onChooseFolder: () -> Uni
  * Pause when muted (on by default) and Resume when unmuted (off by default, only if muting paused
  * it; greyed out while Pause when muted is off). 2026-11-04 mockups.
  */
+/**
+ * Settings → Shine brightness (2026-11-06 mockups): a slider from Off to Bright under the label,
+ * 0 to 300 % of the default shine in 5 % steps; the subtitle shows the level live while dragging.
+ */
+@Composable
+private fun ShineRow(model: AppModel, settings: AppSettings, textSize: Int?) {
+    val size = textSize ?: 15
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    fun percent(fraction: Float) = (fraction * AppSettings.SHINE_MAX / 5).roundToInt() * 5
+    val shown = dragging?.let(::percent) ?: settings.shineLevel
+    Column {
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+            Text("Shine brightness", color = disc.text, fontSize = size.sp)
+            Text(
+                "How bright the light on the record is · ${if (shown == 0) "Off" else "$shown%"}",
+                Modifier.padding(top = 2.dp), color = disc.muted, fontSize = (size - 3).sp,
+            )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Off", color = disc.muted, fontSize = (size - 4).sp)
+                ThinSlider(
+                    settings.shineLevel / AppSettings.SHINE_MAX.toFloat(),
+                    { model.setShineLevel(percent(it)) },
+                    "Shine brightness",
+                    Modifier.weight(1f),
+                    trackHeight = 3.dp,
+                    onDrag = { dragging = it },
+                )
+                Text("Bright", color = disc.muted, fontSize = (size - 4).sp)
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(disc.line))
+    }
+}
+
+/**
+ * Settings → Battery Saver (2026-11-05 mockups): manual, off by default. Turns off all motion, which
+ * is what costs battery while the app is on screen (the spinning disc most).
+ */
+@Composable
+private fun BatterySaverRow(model: AppModel, settings: AppSettings, textSize: Int?) {
+    val sub = "Turns off all motion: the spinning disc and transitions"
+    SettingRow("Battery Saver", sub, divider = false, textSize = textSize ?: 15) {
+        SettingSwitch(settings.batterySaver, "Battery Saver") { model.setFlag(AppSettings.BATTERY_SAVER, it) }
+    }
+}
+
 @Composable
 private fun MuteRows(model: AppModel, settings: AppSettings, textSize: Int?, pauseSub: String? = null) {
     val size = textSize ?: 15
@@ -394,10 +443,12 @@ fun DesktopSettings(model: AppModel, narrow: Boolean, appVersion: String, choose
             SettingRow(
                 "Use system accent",
                 if (system != null) "Follows your desktop's accent${system.name?.let { " · $it" } ?: ""}" else "Your desktop doesn't share an accent color",
-                divider = false, textSize = 13,
+                textSize = 13,
             ) {
                 SettingSwitch(followingSystem, "Use system accent", enabled = system != null) { model.setFlag(AppSettings.USE_SYSTEM_ACCENT, it) }
             }
+            ShineRow(model, settings, textSize = 13)
+            BatterySaverRow(model, settings, textSize = 13)
         }
     }
     val library: @Composable (Modifier) -> Unit = { m ->

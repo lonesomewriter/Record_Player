@@ -98,8 +98,9 @@ fun DesktopApp(
     // Settings → Use system accent: follow the desktop's accent while it shares one.
     val system = systemAccent?.collectAsState()?.value
     val accent = if (settings?.useSystemAccent == true && system != null) Color(system.argb) else Color(settings?.accentArgb ?: 0xFFE0A458)
-    DiscTheme(accent, light = settings?.useLightTheme() == true) {
-        androidx.compose.runtime.CompositionLocalProvider(LocalSystemAccent provides system) {
+    DiscTheme(accent, light = settings?.useLightTheme() == true, batterySaver = settings?.batterySaver == true, shine = (settings?.shineLevel ?: 100) / 100f) {
+        // Desktop motion (pages, dialogs, Up next), as in the desktop mockup.
+        androidx.compose.runtime.CompositionLocalProvider(LocalSystemAccent provides system, LocalDesktopMotion provides true) {
         BoxWithConstraints(Modifier.fillMaxSize().background(disc.shell)) {
             if (settings == null) return@BoxWithConstraints
             val narrow = maxWidth < 900.dp
@@ -148,6 +149,8 @@ fun DesktopApp(
                     onCustomAccent = { picking = true },
                 )
                 val mainArea: @Composable () -> Unit = {
+                    // A new section, playlist or Song details fades in while rising (desktop mockup).
+                    Box(Modifier.fillMaxSize().pageEnter(Triple(view, playlistId.takeIf { view == DesktopView.Playlists }, detailsId))) {
                     MainView(model, state, spin, view, main)
                     tracks[detailsId]?.let { track ->
                         DesktopSongDetails(
@@ -159,6 +162,7 @@ fun DesktopApp(
                                 view = DesktopView.Home
                             },
                         )
+                    }
                     }
                 }
                 androidx.compose.runtime.CompositionLocalProvider(LocalViewDetails provides viewDetails) {
@@ -178,7 +182,8 @@ fun DesktopApp(
                         Column(Modifier.weight(1f).fillMaxHeight()) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 Box(Modifier.weight(1f).fillMaxHeight().background(disc.panel)) { mainArea() }
-                                if (roomForQueue && queueOpen) QueuePanel(model, state)
+                                // Up next slides in and out (2026-11-05 mockup).
+                                QueueSlide(visible = roomForQueue && queueOpen) { QueuePanel(model, state) }
                             }
                             Dock(model, state, narrow = false, queueOpen = queueOpen, onToggleQueue = if (roomForQueue) ({ queueOpen = !queueOpen }) else null) {
                                 showView(DesktopView.Home)
@@ -366,7 +371,7 @@ private fun LibraryView(model: AppModel, state: PlaybackState, narrow: Boolean, 
     val pad = if (narrow) 18.dp else 34.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val grid = CardGrid(maxWidth - pad * 2)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = pad, vertical = if (narrow) 22.dp else 28.dp)) {
+        LazyColumn(Modifier.fillMaxSize().pageEnter(nav.page), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = pad, vertical = if (narrow) 22.dp else 28.dp)) {
             when (val page = nav.page) {
                 is LibraryPage.AlbumPage -> desktopAlbumPage(model, allAlbums.firstOrNull { it.key == page.key }, nav, state.current?.id)
                 is LibraryPage.ArtistPage -> desktopArtistPage(model, allArtists.firstOrNull { it.name == page.name }, nav, state.current?.id, grid, showAlbum = !narrow)
@@ -549,6 +554,23 @@ private fun Chip(text: String, accent: Boolean = false) = Text(
         .border(1.dp, if (accent) disc.accent.copy(alpha = 0.28f) else disc.line, RoundedCornerShape(50)).padding(horizontal = 9.dp, vertical = 5.dp),
     color = if (accent) disc.accentReadable else disc.muted, fontSize = 10.sp, letterSpacing = 0.06.em,
 )
+
+/** Up next sliding in from the right and back out (0.28 s); instant with reduced motion. */
+@Composable
+private fun QueueSlide(visible: Boolean, content: @Composable () -> Unit) {
+    val reduce = rememberStill()
+    androidx.compose.animation.AnimatedVisibility(
+        visible,
+        enter = if (reduce) androidx.compose.animation.EnterTransition.None else
+            androidx.compose.animation.expandHorizontally(androidx.compose.animation.core.tween(280), expandFrom = Alignment.Start) +
+                androidx.compose.animation.slideInHorizontally(androidx.compose.animation.core.tween(280)) { it } +
+                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)),
+        exit = if (reduce) androidx.compose.animation.ExitTransition.None else
+            androidx.compose.animation.shrinkHorizontally(androidx.compose.animation.core.tween(280), shrinkTowards = Alignment.Start) +
+                androidx.compose.animation.slideOutHorizontally(androidx.compose.animation.core.tween(280)) { it } +
+                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(220)),
+    ) { content() }
+}
 
 @Composable
 private fun QueuePanel(model: AppModel, state: PlaybackState) {

@@ -194,6 +194,7 @@ fun PhoneInbox(model: AppModel, onBack: () -> Unit, onOpenProgress: () -> Unit, 
 fun PlaylistBundleExportProgressDialog(task: PlaylistBundleExportTask, onHide: () -> Unit, onCancel: () -> Unit) {
     if (task.status != PlaylistBundleExportStatus.Running) return
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onHide,
         title = {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -319,7 +320,8 @@ private fun PlaylistScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = if (desktop && !narrow) 34.dp else 20.dp, vertical = if (desktop && !narrow) 28.dp else 22.dp)) {
+    // Opening a playlist or going back to the list fades in while rising (desktop mockup; no-op on phone).
+    Column(Modifier.fillMaxSize().pageEnter(pageId).padding(horizontal = if (desktop && !narrow) 34.dp else 20.dp, vertical = if (desktop && !narrow) 28.dp else 22.dp)) {
         Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!desktop || current != null) {
                 CircleIconButton("←", if (current == null) "Back to disc" else "Back to playlists") {
@@ -408,6 +410,7 @@ private fun PlaylistScreen(
     }
     deleteConfirm?.let { playlist ->
         AlertDialog(
+            modifier = Modifier.popIn(),
             onDismissRequest = { deleteConfirm = null },
             title = { Text("Delete ${playlist.name}?") },
             text = { Text("This removes the playlist, not the songs from your library.") },
@@ -432,6 +435,7 @@ private fun PlaylistScreen(
     }
     if (importChoice) {
         AlertDialog(
+            modifier = Modifier.popIn(),
             onDismissRequest = { importChoice = false },
             title = { Text("Import playlist") },
             text = { Text("Choose an M3U/M3U8 playlist or a Record Disc bundle.") },
@@ -480,7 +484,7 @@ private fun PlaylistScreen(
         )
     }
     error?.let { message ->
-        AlertDialog(onDismissRequest = { error = null }, title = { Text("Playlist error") }, text = { Text(message) }, confirmButton = {
+        AlertDialog(modifier = Modifier.popIn(), onDismissRequest = { error = null }, title = { Text("Playlist error") }, text = { Text(message) }, confirmButton = {
             TextButton(onClick = { error = null }) { Text("OK") }
         })
     }
@@ -699,7 +703,7 @@ private fun PlaylistSongRow(
 ) {
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val lifted = reorder.draggingId == track.id
     val shift by animateFloatAsState(
         if (lifted) 0f else reorder.shiftFor(index),
@@ -792,6 +796,7 @@ private fun ExportDialog(
     val progress by progressUpdates.collectAsState()
     fun reportFailure(error: Exception) { onError(error.message ?: "Playlist export failed") }
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Export ${playlist.name}") },
         text = {
@@ -1002,6 +1007,7 @@ private fun ImportReviewDialog(review: ImportReview, onDismiss: () -> Unit, onIm
         is ImportReview.Bundle -> "Review Record Disc"
     }
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -1043,6 +1049,7 @@ private fun AddToPlaylistDialog(model: AppModel, track: TrackEntity, onDismiss: 
     var creating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onDismiss,
         title = { Text("Add to playlist") },
         text = {
@@ -1096,6 +1103,7 @@ private data class NameDialog(val title: String, val confirm: String, val initia
 private fun NameDialogUi(dialog: NameDialog, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var name by remember(dialog) { mutableStateOf(dialog.initial) }
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onDismiss,
         title = { Text(dialog.title) },
         text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true) },

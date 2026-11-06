@@ -144,8 +144,16 @@ val disc: DiscColors @Composable get() = LocalDiscColors.current
  * switches at once. The derived colours (ink, readable accent) follow the blended colour.
  */
 @Composable
-fun DiscTheme(accent: Color, light: Boolean = false, content: @Composable () -> Unit) {
-    val reduceMotion = rememberReduceMotion()
+fun DiscTheme(
+    accent: Color,
+    light: Boolean = false,
+    /** Settings → Battery Saver: all motion off, here and below. */
+    batterySaver: Boolean = false,
+    /** Settings → Shine brightness, as a factor of the default shine (1 = default). */
+    shine: Float = 1f,
+    content: @Composable () -> Unit,
+) {
+    val reduceMotion = rememberReduceMotion() || batterySaver
     val shownAccent by animateColorAsState(
         accent,
         if (reduceMotion) snap() else tween(360, easing = FastOutSlowInEasing),
@@ -169,7 +177,7 @@ fun DiscTheme(accent: Color, light: Boolean = false, content: @Composable () -> 
             surfaceContainerHigh = colors.panel2,
         )
     }
-    CompositionLocalProvider(LocalDiscColors provides colors) {
+    CompositionLocalProvider(LocalDiscColors provides colors, LocalBatterySaver provides batterySaver, LocalShine provides shine) {
         MaterialTheme(colorScheme = scheme, typography = typography, content = content)
     }
 }

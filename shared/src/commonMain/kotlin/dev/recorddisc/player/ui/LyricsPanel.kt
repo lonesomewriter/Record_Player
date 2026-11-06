@@ -116,7 +116,7 @@ private fun SyncedLines(model: AppModel, lyrics: Lyrics, track: TrackEntity?, st
     val tops = remember(lyrics) { mutableStateMapOf<Int, Pair<Float, Int>>() }
     var windowPx by remember { mutableStateOf(0) }
     val target = tops[active.coerceAtLeast(0)]?.let { (top, height) -> windowPx / 2f - top - height / 2f } ?: 0f
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val offset by animateFloatAsState(target, if (reduceMotion) snap() else tween(450))
     Box(
         Modifier.fillMaxWidth().height(windowHeight).clipToBounds().onSizeChanged { windowPx = it.height }

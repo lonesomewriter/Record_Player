@@ -2,6 +2,10 @@
 
 #project
 /project-notes
+# mockups stay private (project manager, 2026-11-06), including their backups
+/project/mockups/
+/version-control/project/mockups/
+/version-control/project-notes/mockups/
 
 # gradle / kotlin build output
 .gradle

@@ -144,7 +144,7 @@ fun PhoneApp(
     }
     val light = settings?.useLightTheme() == true
     SystemBarsEffect(light)
-    DiscTheme(accent, light) {
+    DiscTheme(accent, light, batterySaver = settings?.batterySaver == true, shine = (settings?.shineLevel ?: 100) / 100f) {
         Box(Modifier.fillMaxSize().background(disc.panel).safeDrawingPadding()) {
             if (settings == null) return@Box
             val scan by model.scan.collectAsState()
@@ -269,7 +269,7 @@ private fun BoxScope.PhoneScreens(
     }
     val art by model.artwork.rememberArtwork(state.current?.location, 640)
     val tracks = rememberTrackIndex(model)
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     // View Details: Now Playing for the playing song, otherwise its Song details.
     val viewDetails: (TrackEntity) -> Unit = { t ->
         if (t.id == state.current?.id) {

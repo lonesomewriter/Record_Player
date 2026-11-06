@@ -40,6 +40,10 @@ data class AppSettings(
     val resumeOnUnmute: Boolean = false,
     /** Desktop: follow the desktop's accent colour instead of the chosen one. */
     val useSystemAccent: Boolean = false,
+    /** Settings → Battery Saver (2026-11-05): all motion off (spinning disc, transitions). Manual, off by default. */
+    val batterySaver: Boolean = false,
+    /** Settings → Shine brightness (2026-11-06): the record's shine, 0 (off) to 300 % of the default; 100 = default. */
+    val shineLevel: Int = 100,
     /** Desktop: start the next song with no silence between tracks. */
     val gapless: Boolean = true,
     /** Desktop: rescan by itself when files in the music folder change. */
@@ -82,6 +86,9 @@ data class AppSettings(
         const val PAUSE_ON_MUTE = "pauseOnMute"
         const val RESUME_ON_UNMUTE = "resumeOnUnmute"
         const val USE_SYSTEM_ACCENT = "useSystemAccent"
+        const val BATTERY_SAVER = "batterySaver"
+        const val SHINE_LEVEL = "shineLevel"
+        const val SHINE_MAX = 300
         const val GAPLESS = "gapless"
         const val WATCH_FOLDER = "watchFolder"
         const val SHOW_LYRICS = "showLyrics"
@@ -112,6 +119,8 @@ data class AppSettings(
                 pauseOnMute = flag(PAUSE_ON_MUTE, d.pauseOnMute),
                 resumeOnUnmute = flag(RESUME_ON_UNMUTE, d.resumeOnUnmute),
                 useSystemAccent = flag(USE_SYSTEM_ACCENT, d.useSystemAccent),
+                batterySaver = flag(BATTERY_SAVER, d.batterySaver),
+                shineLevel = values[SHINE_LEVEL]?.toIntOrNull()?.coerceIn(0, SHINE_MAX) ?: d.shineLevel,
                 gapless = flag(GAPLESS, d.gapless),
                 watchFolder = flag(WATCH_FOLDER, d.watchFolder),
                 showLyrics = flag(SHOW_LYRICS, d.showLyrics),

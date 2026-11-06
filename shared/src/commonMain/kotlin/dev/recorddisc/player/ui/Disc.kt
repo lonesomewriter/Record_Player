@@ -8,6 +8,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -65,8 +68,10 @@ class DiscSpin {
 @Composable
 fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
     val spin = remember { DiscSpin() }
-    val reduceMotion = rememberReduceMotion()
-    val target by rememberUpdatedState(spinning && !reduceMotion)
+    val still = rememberStill()
+    val batterySaver = LocalBatterySaver.current
+    val target by rememberUpdatedState(spinning && !still)
+    val stopAtOnce by rememberUpdatedState(batterySaver)
     LaunchedEffect(spin, periodMs) {
         var speed = 0f
         while (true) {
@@ -80,7 +85,8 @@ fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
                 val goal = if (target) 1f else 0f
                 val timeConstant = if (goal > speed) WebConfigs.DISC_SPIN_UP_MS else WebConfigs.DISC_SPIN_DOWN_MS
                 speed = if (timeConstant <= 0f) goal else speed + (goal - speed) * (1f - exp(-dt / timeConstant))
-                if (goal == 0f && speed < 0.001f) {
+                // Battery Saver stops the record at once instead of letting it coast.
+                if (goal == 0f && (speed < 0.001f || stopAtOnce)) {
                     speed = 0f
                     break
                 }
@@ -93,10 +99,36 @@ fun rememberDiscSpin(spinning: Boolean, periodMs: Float): DiscSpin {
 
 /**
  * A vinyl record. The label shows [art] when there is cover art, otherwise an accent gradient
- * with "SIDE A"; [blank] is the grey label of the first-run screen.
+ * with "SIDE A"; [blank] is the grey label of the first-run screen. The record turns with [spin];
+ * its shine stays still over it, and an accent
+ * backlight glows around it (2026-11-05 mockups).
  */
 @Composable
 fun Disc(size: Dp, spin: DiscSpin, art: ImageBitmap?, modifier: Modifier = Modifier, blank: Boolean = false) {
+    val accent = disc.accent
+    Box(modifier.size(size).then(if (blank) Modifier else Modifier.drawBehind { drawBacklight(accent) }), contentAlignment = Alignment.Center) {
+        DiscRecord(size, spin, art, blank)
+        DiscLight(size)
+    }
+}
+
+/** A soft rim of the accent colour around the record, as if lit from behind. Still, so it costs nothing. */
+private fun DrawScope.drawBacklight(accent: Color) {
+    val r = size.minDimension / 2
+    for ((spread, alpha) in listOf(28.dp.toPx() to 0.24f, 64.dp.toPx() to 0.10f)) {
+        val outer = r + spread
+        drawCircle(
+            Brush.radialGradient(
+                (r * 0.9f / outer) to accent.copy(alpha = alpha), 1f to Color.Transparent,
+                center = center, radius = outer,
+            ),
+            outer,
+        )
+    }
+}
+
+@Composable
+private fun DiscRecord(size: Dp, spin: DiscSpin, art: ImageBitmap?, blank: Boolean) {
     val accent = disc.accent
     val measurer = rememberTextMeasurer()
     val small = size < 260.dp
@@ -107,7 +139,7 @@ fun Disc(size: Dp, spin: DiscSpin, art: ImageBitmap?, modifier: Modifier = Modif
         letterSpacing = 0.18.em,
     )
     Canvas(
-        modifier
+        Modifier
             .size(size)
             .shadow(26.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
             .graphicsLayer { rotationZ = spin.angle },
@@ -154,19 +186,8 @@ private fun DrawScope.drawGrooves(r: Float) {
         drawCircle(Color(0xFF14110E), gr, style = groove)
         gr += step
     }
-    // Shadow round the rim, and two soft reflections that turn with the disc.
+    // Shadow round the rim. (The shine is drawn still, over the turning record: DiscLight.)
     drawCircle(Brush.radialGradient(0.72f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f), center = center, radius = r), r)
-    rotate(-90f) {
-        drawCircle(
-            Brush.sweepGradient(
-                0f to Color.Transparent, 34f / 360 to Color.Transparent, 44f / 360 to Color.White.copy(alpha = 0.07f),
-                56f / 360 to Color.Transparent, 178f / 360 to Color.Transparent, 196f / 360 to Color.White.copy(alpha = 0.045f),
-                214f / 360 to Color.Transparent, 1f to Color.Transparent,
-            ),
-            r,
-            blendMode = BlendMode.Screen,
-        )
-    }
     drawCircle(Color.White.copy(alpha = 0.07f), r - 0.5.dp.toPx(), style = Stroke(1.dp.toPx()))
 }
 
@@ -211,7 +232,7 @@ private fun DrawScope.drawLabelLight(labelR: Float) {
 @Composable
 fun MarqueeArc(boxSize: Dp, running: Boolean, modifier: Modifier = Modifier, bothSides: Boolean = false, dim: Boolean = false) {
     val color = disc.accentReadable
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val phase = if (running && !reduceMotion) {
         val t = rememberInfiniteTransition()
         t.animateFloat(0f, 8f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Restart)).value
@@ -239,7 +260,7 @@ fun MarqueeArc(boxSize: Dp, running: Boolean, modifier: Modifier = Modifier, bot
 @Composable
 fun MarqueeRing(diameter: Dp, running: Boolean, modifier: Modifier = Modifier, fast: Boolean = false, dim: Boolean = false) {
     val color = disc.accentReadable
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val turn = if (running && !reduceMotion) {
         val t = rememberInfiniteTransition()
         t.animateFloat(0f, 360f, infiniteRepeatable(tween(if (fast) 16_000 else 120_000, easing = LinearEasing))).value
@@ -263,7 +284,7 @@ fun MarqueeRing(diameter: Dp, running: Boolean, modifier: Modifier = Modifier, f
 fun LocalLight(modifier: Modifier = Modifier) {
     val color = disc.accentReadable
     val glow = disc.accent
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val level = if (reduceMotion) {
         1f
     } else {

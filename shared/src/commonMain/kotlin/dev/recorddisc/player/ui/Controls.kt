@@ -109,10 +109,12 @@ fun RepeatMode.label(): String = when (this) {
 /**
  * Thin seek/volume bar. Shows [value] (0..1) unless the user is dragging, and reports the
  * final position through [onCommit] when they let go, so playback isn't flooded with seeks.
+ * [onDrag] hears the position while dragging (null when the drag ends), e.g. for a live label.
  */
 @Composable
-fun ThinSlider(value: Float, onCommit: (Float) -> Unit, label: String, modifier: Modifier = Modifier, trackHeight: Dp = 4.dp) {
+fun ThinSlider(value: Float, onCommit: (Float) -> Unit, label: String, modifier: Modifier = Modifier, trackHeight: Dp = 4.dp, onDrag: ((Float?) -> Unit)? = null) {
     var dragging by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(dragging) { onDrag?.invoke(dragging) }
     val shown = (dragging ?: value).coerceIn(0f, 1f)
     val accent = disc.accentReadable
     val track = disc.text.copy(alpha = 0.14f)
@@ -184,7 +186,8 @@ fun MessageToast(messages: Flow<String>, modifier: Modifier = Modifier) {
             text = null
         }
     }
-    AnimatedVisibility(text != null, modifier, enter = fadeIn(), exit = fadeOut()) {
+    // Fades in while rising slightly, as in both mockups' toasts.
+    AnimatedVisibility(text != null, modifier, enter = fadeIn() + androidx.compose.animation.slideInVertically { it / 3 }, exit = fadeOut()) {
         Row(
             Modifier.clip(RoundedCornerShape(50)).background(disc.panel2).border(1.dp, disc.line, RoundedCornerShape(50))
                 .padding(horizontal = 14.dp, vertical = 9.dp),

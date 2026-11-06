@@ -106,6 +106,7 @@ fun ConvertDialog(model: AppModel, playlist: PlaylistView, actions: PlaylistFile
     }
 
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onDismiss,
         title = {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -239,6 +240,7 @@ fun ConvertDialog(model: AppModel, playlist: PlaylistView, actions: PlaylistFile
 @Composable
 fun ConvertProgressDialog(task: ConvertTask, onHide: () -> Unit, onCancel: () -> Unit, onDone: () -> Unit) {
     AlertDialog(
+        modifier = Modifier.popIn(),
         onDismissRequest = onHide,
         title = {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

@@ -70,7 +70,7 @@ fun RecordSleeve(art: ImageBitmap?, cover: Dp, modifier: Modifier = Modifier, pe
     val record = cover * 0.9f
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
-    val reduceMotion = rememberReduceMotion()
+    val reduceMotion = rememberStill()
     val slide by animateDpAsState(
         if (peekOnHover && hovered) cover * 0.06f else 0.dp,
         if (reduceMotion) snap() else tween(500),

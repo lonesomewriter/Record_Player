@@ -250,7 +250,8 @@ if ((WANT_DESKTOP)); then
 
     # Menu entry (linux_packaging.md): Exec and Icon point at shipped files, it passes
     # desktop-file-validate, and it lists the audio types so file managers offer "Open with".
-    DESKTOP="$(find "$WORK/deb" -name '*.desktop' -path '*/lib/*' -print -quit)"
+    # Files only, outside the bundled Java runtime: it has a folder named "java.desktop" (licences).
+    DESKTOP="$(find "$WORK/deb" -type f -name '*.desktop' -path '*/lib/*' -not -path '*/runtime/*' -print -quit)"
     if [[ -f "$DESKTOP" ]]; then
       EXEC_BIN="$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$DESKTOP")"; ICON_FILE="$(sed -n 's/^Icon=//p' "$DESKTOP")"
       [[ -x "$WORK/deb$EXEC_BIN" && -f "$WORK/deb$ICON_FILE" ]] \

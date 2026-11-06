@@ -230,11 +230,11 @@ fun BoxScope.DesktopLyricsEditor(model: AppModel, track: TrackEntity, state: Pla
     LaunchedEffect(Unit) { focus.requestFocus() }
     val shape = RoundedCornerShape(22.dp)
     Box(
-        Modifier.matchParentSize().background(disc.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { leave() },
+        Modifier.matchParentSize().scrimIn().background(disc.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { leave() },
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.padding(24.dp).widthIn(max = 680.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
+            Modifier.padding(24.dp).popIn().widthIn(max = 680.dp).fillMaxWidth().clip(shape).background(disc.panel2).border(1.dp, disc.line, shape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .focusRequester(focus).focusable()
                 .onPreviewKeyEvent { e ->
@@ -417,10 +417,10 @@ private fun ColumnScope.Note(draft: LyricsDraft, isCurrent: Boolean, desktop: Bo
 private fun BoxScope.DiscardDialog(draft: LyricsDraft, onClose: () -> Unit) {
     val shape = RoundedCornerShape(18.dp)
     Box(
-        Modifier.matchParentSize().background(disc.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+        Modifier.matchParentSize().scrimIn().background(disc.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center,
     ) {
-        Column(Modifier.widthIn(max = 320.dp).padding(16.dp).clip(shape).background(disc.panel2).border(1.dp, disc.line, shape).padding(18.dp)) {
+        Column(Modifier.popIn().widthIn(max = 320.dp).padding(16.dp).clip(shape).background(disc.panel2).border(1.dp, disc.line, shape).padding(18.dp)) {
             Text("Discard changes?", color = disc.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Text("Your changes to these lyrics haven't been saved.", Modifier.padding(top = 6.dp, bottom = 16.dp), color = disc.muted, fontSize = 12.sp, lineHeight = 1.5.em)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

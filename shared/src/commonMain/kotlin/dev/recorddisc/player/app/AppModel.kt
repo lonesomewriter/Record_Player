@@ -1107,6 +1107,9 @@ class AppModel(
 
     fun setFlag(name: String, value: Boolean) = put(name, value.toString())
 
+    /** Settings → Shine brightness: percent of the default shine, 0 to [AppSettings.SHINE_MAX]. */
+    fun setShineLevel(percent: Int) = put(AppSettings.SHINE_LEVEL, percent.coerceIn(0, AppSettings.SHINE_MAX).toString())
+
     private fun put(name: String, value: String) = scope.launch { settingsDao.put(SettingEntity(name, value)) }
 
     private companion object {

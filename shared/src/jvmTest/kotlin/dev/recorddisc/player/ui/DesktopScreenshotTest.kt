@@ -795,6 +795,116 @@ class DesktopScreenshotTest {
     }
 
     /**
+     * Desktop motion (2026-11-05 mockup): a new section fades in while rising, and Up next slides
+     * out and back. Saves mid-transition frames (49-…) for review and checks the end states.
+     */
+    @Test
+    fun desktopTransitionsRunAndSettle() {
+        val platform = MockupPlatform()
+        val model = model(platform)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        model.tracks.await { it.size == 4 }
+        var clock = 0L
+        val scene = ImageComposeScene(1440, 852, Density(1f)) { DesktopApp(model, chooseFolder = { null }, appVersion = "0.1.0") }
+        fun frame(ms: Long) { clock += ms * 1_000_000; scene.render(clock) }
+        fun save(name: String) { File(out, "$name.png").writeBytes(scene.render(clock).encodeToData(EncodedImageFormat.PNG)!!.bytes) }
+        fun tap(label: String) {
+            val node = nodes(scene).first { n ->
+                n.config.contains(SemanticsActions.OnClick) && (n.config[SemanticsActions.OnClick].label == label ||
+                    n.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text == label } ||
+                    n.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.contains(label))
+            }
+            assertNotNull(node.config[SemanticsActions.OnClick].action).invoke()
+        }
+        try {
+            repeat(20) { frame(33) }
+            assertNotNull(nodeWithText(scene, "Up next"), "Up next starts open")
+            tap("Library")
+            repeat(5) { frame(33) } // the animation's clock starts on the frame after the tap
+            save("49-transition-section-midway")
+            repeat(20) { frame(33) }
+            assertNotNull(nodeWithText(scene, "Collection".uppercase()), "Library arrived")
+            save("50-transition-section-done")
+
+            tap("Hide queue")
+            repeat(5) { frame(33) }
+            save("51-transition-queue-midway")
+            repeat(20) { frame(33) }
+            assertEquals(null, nodeWithText(scene, "Up next"), "Up next slid away")
+            tap("Show queue")
+            repeat(20) { frame(33) }
+            assertNotNull(nodeWithText(scene, "Up next"), "Up next slid back")
+        } finally {
+            scene.close()
+        }
+    }
+
+    /**
+     * The record's still accent shine and Battery Saver (2026-11-05 mockups; visualizer removed
+     * 2026-11-06): while playing, the record turns under the shine; with Battery Saver on, nothing
+     * on screen moves. Saves 52-record-shine.png and 53-battery-saver-settings.png; also checks Settings → Shine brightness.
+     */
+    @Test
+    fun recordShineAndBatterySaver() {
+        val platform = MockupPlatform()
+        val player = FakePlayer()
+        val model = model(platform, player)
+        model.scan(platform.suggestedFolder)
+        model.scan.await { it is ScanState.Done }
+        model.finishSetup()
+        model.settings.await { it?.setupDone == true }
+        model.tracks.await { it.size == 4 }
+        player.play()
+        var clock = 0L
+        val scene = ImageComposeScene(1440, 852, Density(1f)) { DesktopApp(model, chooseFolder = { null }, appVersion = "0.1.0") }
+        fun shot(ms: Long): ByteArray { clock += ms * 1_000_000; return scene.render(clock).encodeToData(EncodedImageFormat.PNG)!!.bytes }
+        try {
+            repeat(60) { shot(33) }
+            val turning = shot(33)
+            File(out, "52-record-shine.png").writeBytes(turning)
+            assertTrue(!turning.contentEquals(shot(500)), "the record turns while playing")
+
+            model.setFlag(dev.recorddisc.player.app.AppSettings.BATTERY_SAVER, true)
+            model.settings.await { it?.batterySaver == true }
+            repeat(5) { shot(33) }
+            val still = shot(33)
+            assertTrue(still.contentEquals(shot(500)), "Battery Saver: nothing moves")
+        } finally {
+            scene.close()
+        }
+        // The switch in Settings, on.
+        val settingsScene = scene(model, view = DesktopView.Settings)
+        try {
+            settle(settingsScene)
+            assertNotNull(nodeWithText(settingsScene, "Battery Saver"))
+            assertNotNull(nodeWithText(settingsScene, "Turns off all motion: the spinning disc and transitions"))
+            capture(settingsScene, "53-battery-saver-settings")
+            // The switch (not the row's text): its click is labelled "Battery Saver".
+            val switch = nodes(settingsScene).first { it.config.contains(SemanticsActions.OnClick) && it.config[SemanticsActions.OnClick].label == "Battery Saver" }
+            assertNotNull(switch.config[SemanticsActions.OnClick].action).invoke()
+            model.settings.await { it?.batterySaver == false }
+            // Shine brightness (2026-11-06): the slider row shows the level; the setting is kept and clamped.
+            assertNotNull(nodeWithText(settingsScene, "Shine brightness"))
+            assertNotNull(nodeWithText(settingsScene, "How bright the light on the record is · 100%"))
+            model.setShineLevel(250)
+            model.settings.await { it?.shineLevel == 250 }
+            settle(settingsScene)
+            assertNotNull(nodeWithText(settingsScene, "How bright the light on the record is · 250%"))
+            model.setShineLevel(999)
+            model.settings.await { it?.shineLevel == dev.recorddisc.player.app.AppSettings.SHINE_MAX }
+            model.setShineLevel(0)
+            model.settings.await { it?.shineLevel == 0 }
+            settle(settingsScene)
+            assertNotNull(nodeWithText(settingsScene, "How bright the light on the record is · Off"))
+        } finally {
+            settingsScene.close()
+        }
+    }
+
+    /**
      * F-Droid store screenshots (fastlane/metadata/android/en-US/images/phoneScreenshots): the phone
      * app at 1080×2340 with the made-up sample library, so no real music or personal data appears.
      * Only runs when asked: STORE_SCREENSHOTS=1 ./gradlew --no-daemon :shared:jvmTest --tests '*storeScreenshots'
